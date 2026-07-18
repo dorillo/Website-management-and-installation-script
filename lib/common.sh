@@ -175,6 +175,14 @@ prompt_secret() {
     done
 }
 
+prompt_secret_optional() {
+    local message="$1" variable_name="$2" prompt_value
+    printf '%s (необязательно, Enter — пропустить): ' "$message" >/dev/tty
+    IFS= read -r -s prompt_value </dev/tty || die "Ввод отменён."
+    printf '\n' >/dev/tty
+    printf -v "$variable_name" '%s' "$prompt_value"
+}
+
 prompt_secret_confirm() {
     local message="$1" variable_name="$2" first second
     while true; do

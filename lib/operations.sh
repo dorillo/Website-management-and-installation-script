@@ -458,7 +458,8 @@ configure_remnawave() {
     prompt_secret "Новый токен Remnawave (не менее 32 символов)" token
     (( ${#token} >= 32 )) || die "Токен слишком короткий."
     prompt_default "Cookies Remnawave в формате JSON" "$(env_get REMNAWAVE_COOKIES_JSON)" cookies
-    jq -e . >/dev/null <<<"$cookies" || die "Значение cookies должно быть корректным JSON."
+    normalize_json_object "$cookies" cookies || \
+        die "Значение cookies должно быть корректным JSON-объектом."
     backup="$(backup_environment)"
     ACTIVE_ENV_BACKUP="$backup"
     env_set REMNAWAVE_API_URL "$url"

@@ -63,9 +63,32 @@ grep -Fq "printf '%s [y/n]: '" "$ROOT/lib/common.sh"
 grep -Fq '"$BRAND_NAME_INPUT — Ускоритель интернета" PUBLIC_NEUTRAL_SITE_TITLE_INPUT 150' \
     "$ROOT/lib/config.sh"
 grep -Fq 'PUBLIC_NEUTRAL_SITE_TAGLINE_INPUT 300' "$ROOT/lib/config.sh"
+grep -Fq 'REMNAWAVE_COOKIES_JSON=$REMNAWAVE_COOKIES_JSON_INPUT' "$ROOT/lib/config.sh"
+grep -Fq 'prompt_secret_optional' "$ROOT/lib/config.sh"
+grep -Fq 'validate_remnawave_cookies_input' "$ROOT/lib/deploy.sh"
 grep -Fq 'env_set ADMIN_BOOTSTRAP_EMAILS ""' "$ROOT/lib/operations.sh"
 grep -Fq 'apply_environment_change "$backup" restart' "$ROOT/lib/operations.sh"
 grep -Fq 'finish_admin_bootstrap' "$ROOT/lib/deploy.sh"
+
+(
+    # This stub verifies that the helper writes its result into the caller's variable.
+    # shellcheck source=../lib/config.sh
+    source "$ROOT/lib/config.sh"
+    jq() { printf '%s\n' '{"XX@2X1XXX":"XXXX4!XX"}'; }
+    normalized=""
+    normalize_json_object '{ "XX@2X1XXX": "XXXX4!XX" }' normalized
+    [[ "$normalized" == '{"XX@2X1XXX":"XXXX4!XX"}' ]]
+)
+
+if command -v jq >/dev/null 2>&1; then
+    # shellcheck source=../lib/config.sh
+    source "$ROOT/lib/config.sh"
+    normalized=""
+    normalize_json_object '{ "XX@2X1XXX": "XXXX4!XX" }' normalized
+    [[ "$normalized" == '{"XX@2X1XXX":"XXXX4!XX"}' ]]
+    ! normalize_json_object '["not", "an", "object"]' normalized
+    ! normalize_json_object 'invalid JSON' normalized
+fi
 
 (
     # shellcheck source=../lib/config.sh

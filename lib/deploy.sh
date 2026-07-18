@@ -275,6 +275,7 @@ initial_install() {
     read_github_token
     update_operating_system
     check_required_commands curl jq openssl tar flock
+    validate_remnawave_cookies_input
     SECRET_KEY_INPUT="$(random_hex 48)"
     if [[ -n "$YOOKASSA_SHOP_ID_INPUT" ]]; then
         YOOKASSA_WEBHOOK_SECRET_INPUT="$(random_hex 32)"

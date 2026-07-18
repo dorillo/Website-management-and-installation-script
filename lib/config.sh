@@ -73,7 +73,7 @@ AUTH_COOKIE_SAMESITE=lax
 
 REMNAWAVE_API_URL=$REMNAWAVE_API_URL_INPUT
 REMNAWAVE_TOKEN=$REMNAWAVE_TOKEN_INPUT
-REMNAWAVE_COOKIES_JSON={}
+REMNAWAVE_COOKIES_JSON=$REMNAWAVE_COOKIES_JSON_INPUT
 
 YOOKASSA_API_URL=https://api.yookassa.ru/v3
 YOOKASSA_CONFIRMATION_HOSTS=yoomoney.ru,*.yoomoney.ru,yookassa.ru,*.yookassa.ru
@@ -152,6 +152,26 @@ prompt_inn_default() {
     done
 }
 
+normalize_json_object() {
+    local value="$1" variable_name="$2" json_output
+    json_output="$(jq -cer 'if type == "object" then . else error("expected JSON object") end' \
+        <<<"$value" 2>/dev/null)" || return 1
+    printf -v "$variable_name" '%s' "$json_output"
+}
+
+validate_remnawave_cookies_input() {
+    local normalized
+    while true; do
+        if normalize_json_object "$REMNAWAVE_COOKIES_JSON_INPUT" normalized; then
+            REMNAWAVE_COOKIES_JSON_INPUT="$normalized"
+            return 0
+        fi
+        warn 'Cookies Remnawave должны быть корректным JSON-объектом, например {"name":"value"}.'
+        prompt_secret_optional "Cookies Remnawave в формате JSON" REMNAWAVE_COOKIES_JSON_INPUT
+        [[ -n "$REMNAWAVE_COOKIES_JSON_INPUT" ]] || REMNAWAVE_COOKIES_JSON_INPUT="{}"
+    done
+}
+
 collect_firewall_settings() {
     local value
     FIREWALL_MANAGED=false
@@ -215,6 +235,12 @@ collect_installation_settings() {
     validate_https_url "$REMNAWAVE_API_URL_INPUT" || die "URL API Remnawave должен использовать HTTPS."
     prompt_secret "Токен Remnawave (не менее 32 символов)" REMNAWAVE_TOKEN_INPUT
     (( ${#REMNAWAVE_TOKEN_INPUT} >= 32 )) || die "Токен Remnawave слишком короткий для production."
+    prompt_secret_optional \
+        'Cookies Remnawave в формате JSON, например {"XX@2X1XXX":"XXXX4!XX"}' \
+        REMNAWAVE_COOKIES_JSON_INPUT
+    if [[ -z "$REMNAWAVE_COOKIES_JSON_INPUT" ]]; then
+        REMNAWAVE_COOKIES_JSON_INPUT="{}"
+    fi
 
     YOOKASSA_SHOP_ID_INPUT=""
     YOOKASSA_SECRET_KEY_INPUT=""
