@@ -22,7 +22,7 @@
 Запустите на сервере от пользователя с `sudo`:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/dorillo/vpn-site-manager/main/install.sh | sudo bash -s -- install
+curl -fsSL https://raw.githubusercontent.com/dorillo/Website-management-and-installation-script/main/install.sh | sudo bash -s -- install
 ```
 
 Установщик обновит пакеты Ubuntu и запросит все необходимые значения. Сборка Python 3.14 из исходников может занять несколько минут. После установки команда управления доступна как:
@@ -112,4 +112,3 @@ bash tests/run.sh
 ```
 
 Они проверяют синтаксис Bash, валидаторы, рендер Nginx и Python-инструменты env-файла. Полный интеграционный тест установки требует отдельной чистой VM с Ubuntu 24.04, рабочим DNS, PostgreSQL, systemd и тестовым приватным репозиторием.
-

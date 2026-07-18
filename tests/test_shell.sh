@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
-DEFAULT_MANAGER_REPOSITORY=dorillo/vpn-site-manager
+DEFAULT_MANAGER_REPOSITORY=dorillo/Website-management-and-installation-script
 DEFAULT_MANAGER_REF=main
 
 # shellcheck source=../lib/common.sh
@@ -35,6 +35,7 @@ assert_invalid validate_email admin@example
 assert_invalid validate_email 'admin @example.com'
 
 assert_valid validate_repository dorillo/vpn-site
+assert_valid validate_repository dorillo/Website-management-and-installation-script
 assert_invalid validate_repository 'https://github.com/dorillo/vpn-site'
 assert_invalid validate_repository dorillo/vpn/site
 
@@ -60,6 +61,14 @@ update_stop_line="$(grep -n '^[[:space:]]*systemctl stop \"\$SERVICE_NAME\"' "$R
 (( update_flag_line < update_stop_line ))
 grep -q 'track_initial_tls_state' "$ROOT/lib/tls.sh"
 grep -q 'restore_initial_tls_state' "$ROOT/lib/deploy.sh"
+grep -q '^readonly DEFAULT_MANAGER_REPOSITORY="dorillo/Website-management-and-installation-script"$' \
+    "$ROOT/install.sh"
+grep -q '^readonly LEGACY_MANAGER_REPOSITORY="dorillo/vpn-site-manager"$' \
+    "$ROOT/install.sh"
+grep -q 'MANAGER_REPOSITORY="$DEFAULT_MANAGER_REPOSITORY"' "$ROOT/lib/common.sh"
+grep -q 'raw.githubusercontent.com/dorillo/Website-management-and-installation-script/main/install.sh' \
+    "$ROOT/README.md"
+! grep -Rqs 'dorillo/vpn-site-manager' "$ROOT/lib" "$ROOT/templates" "$ROOT/README.md"
 grep -q '^shopt -s inherit_errexit$' "$ROOT/install.sh"
 grep -q '/payments/yookassa/webhook 0;' "$ROOT/templates/nginx.conf"
 grep -q 'access_log .* if=\$vpn_site_access_log;' "$ROOT/templates/nginx.conf"

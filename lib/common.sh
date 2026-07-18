@@ -333,7 +333,7 @@ check_required_commands() {
 }
 
 main() {
-    local command="menu"
+    local command="menu" manager_repository_migrated=0
 
     while (( $# )); do
         case "$1" in
@@ -358,7 +358,15 @@ main() {
     acquire_lock
     check_ubuntu
     load_manager_config
+    if [[ "$MANAGER_REPOSITORY" == "$LEGACY_MANAGER_REPOSITORY" ]]; then
+        MANAGER_REPOSITORY="$DEFAULT_MANAGER_REPOSITORY"
+        manager_repository_migrated=1
+    fi
     validate_manager_config
+    if (( manager_repository_migrated == 1 )); then
+        warn "Обновляется устаревший адрес репозитория менеджера."
+        write_manager_config
+    fi
     if [[ "$command" == "install" || "$command" == "menu" || "$command" == "update" ]]; then
         require_tty
     fi
