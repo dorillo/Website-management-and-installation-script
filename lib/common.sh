@@ -189,9 +189,8 @@ prompt_secret_confirm() {
 }
 
 confirm() {
-    local message="$1" default_answer="${2:-no}" answer hint
-    [[ "$default_answer" == "yes" ]] && hint="Y/n" || hint="y/N"
-    printf '%s [%s]: ' "$message" "$hint" >/dev/tty
+    local message="$1" default_answer="${2:-no}" answer
+    printf '%s [y/n]: ' "$message" >/dev/tty
     IFS= read -r answer </dev/tty || return 1
     answer="${answer,,}"
     [[ -z "$answer" ]] && answer="$default_answer"

@@ -58,6 +58,77 @@ validate_integer_range 14 1 3650
 grep -Fq '(( ${#SMTP_PASSWORD_INPUT} >= 10 ))' "$ROOT/lib/config.sh"
 grep -Fq '(( ${#password} >= 10 ))' "$ROOT/lib/operations.sh"
 ! grep -Rqs 'пароль SMTP (не менее 12 символов)' "$ROOT/lib"
+grep -Fq "printf '%s [y/n]: '" "$ROOT/lib/common.sh"
+! grep -RqsE 'Y/n|y/N' "$ROOT/lib" "$ROOT/install.sh"
+grep -Fq '"$BRAND_NAME_INPUT — Ускоритель интернета" PUBLIC_NEUTRAL_SITE_TITLE_INPUT 150' \
+    "$ROOT/lib/config.sh"
+grep -Fq 'PUBLIC_NEUTRAL_SITE_TAGLINE_INPUT 300' "$ROOT/lib/config.sh"
+grep -Fq 'env_set ADMIN_BOOTSTRAP_EMAILS ""' "$ROOT/lib/operations.sh"
+grep -Fq 'apply_environment_change "$backup" restart' "$ROOT/lib/operations.sh"
+grep -Fq 'finish_admin_bootstrap' "$ROOT/lib/deploy.sh"
+
+(
+    # shellcheck source=../lib/config.sh
+    source "$ROOT/lib/config.sh"
+    restarted=0
+    systemctl() {
+        [[ "$1" == "restart" ]] && restarted=1
+        [[ "$1" != "is-active" ]]
+    }
+    validate_application_environment() { return 0; }
+    wait_for_local_health() { return 0; }
+    success() { :; }
+
+    apply_environment_change /unused/backup restart
+    (( restarted == 1 ))
+)
+
+(
+    # shellcheck source=../lib/operations.sh
+    source "$ROOT/lib/operations.sh"
+    DOMAIN=vpn.example.com
+    set_key=unset
+    set_value=unset
+    applied_backup=unset
+    applied_policy=unset
+    require_installed() { :; }
+    env_get() { printf '%s\n' admin@example.com; }
+    confirm() { return 0; }
+    backup_environment() { printf '%s\n' /tmp/env-backup; }
+    env_set() { set_key="$1"; set_value="$2"; }
+    apply_environment_change() { applied_backup="$1"; applied_policy="$2"; }
+    success() { :; }
+
+    finish_admin_bootstrap >/dev/null
+    [[ "$set_key" == "ADMIN_BOOTSTRAP_EMAILS" && -z "$set_value" ]]
+    [[ "$applied_backup" == "/tmp/env-backup" && "$applied_policy" == "restart" ]]
+)
+
+(
+    # shellcheck source=../lib/operations.sh
+    source "$ROOT/lib/operations.sh"
+    DOMAIN=vpn.example.com
+    require_installed() { :; }
+    env_get() { printf '%s\n' admin@example.com; }
+    confirm() { return 1; }
+    env_set() { return 1; }
+    apply_environment_change() { return 1; }
+    warn() { :; }
+
+    finish_admin_bootstrap >/dev/null
+)
+
+(
+    # shellcheck source=../lib/operations.sh
+    source "$ROOT/lib/operations.sh"
+    require_installed() { :; }
+    env_get() { printf '\n'; }
+    confirm() { return 1; }
+    env_set() { return 1; }
+    success() { :; }
+
+    finish_admin_bootstrap
+)
 
 openssl_install_line="$(grep -n 'check_required_commands curl jq openssl' "$ROOT/lib/deploy.sh" | cut -d: -f1)"
 yookassa_secret_line="$(grep -n 'YOOKASSA_WEBHOOK_SECRET_INPUT=.*random_hex' "$ROOT/lib/deploy.sh" | cut -d: -f1)"

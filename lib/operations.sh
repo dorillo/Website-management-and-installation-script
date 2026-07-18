@@ -522,15 +522,28 @@ configure_limits() {
     apply_environment_change "$backup"
 }
 
-configure_admin_bootstrap() {
+finish_admin_bootstrap() {
     local backup email
     require_installed
-    warn "Эта настройка управляет только созданием первого администратора. Она не восстанавливает и не добавляет последующих администраторов."
-    prompt_validated_email "Email первого администратора" email
+    email="$(env_get ADMIN_BOOTSTRAP_EMAILS || true)"
+    if [[ -z "$email" ]]; then
+        success "Выдача прав первого администратора уже завершена; ADMIN_BOOTSTRAP_EMAILS пуст."
+        return 0
+    fi
+
+    printf '\nЗавершение выдачи прав первого администратора\n\n'
+    printf '1. Откройте https://%s и войдите с email %s.\n' "$DOMAIN" "$email"
+    printf '2. Убедитесь, что учётная запись получила права администратора.\n\n'
+    if ! confirm "Вход выполнен и права администратора получены?" no; then
+        warn "ADMIN_BOOTSTRAP_EMAILS оставлен без изменений. Завершить процедуру можно позже в настройках окружения."
+        return 0
+    fi
+
     backup="$(backup_environment)"
     ACTIVE_ENV_BACKUP="$backup"
-    env_set ADMIN_BOOTSTRAP_EMAILS "$email"
-    apply_environment_change "$backup"
+    env_set ADMIN_BOOTSTRAP_EMAILS ""
+    apply_environment_change "$backup" restart
+    success "ADMIN_BOOTSTRAP_EMAILS очищен, сайт перезапущен."
 }
 
 configure_backup_retention() {
@@ -553,7 +566,7 @@ environment_menu() {
         printf '3. Remnawave\n'
         printf '4. YooKassa\n'
         printf '5. Ограничения запросов и рабочие лимиты\n'
-        printf '6. Email первого администратора\n'
+        printf '6. Завершить выдачу прав первого администратора\n'
         printf '7. Безопасная сводка конфигурации\n'
         printf '8. Редактировать полный env-файл\n'
         printf '0. Назад\n\n'
@@ -565,7 +578,7 @@ environment_menu() {
             3) configure_remnawave; pause ;;
             4) configure_yookassa; pause ;;
             5) configure_limits; pause ;;
-            6) configure_admin_bootstrap; pause ;;
+            6) finish_admin_bootstrap; pause ;;
             7) show_environment_summary; pause ;;
             8) edit_environment_file; pause ;;
             0) return 0 ;;

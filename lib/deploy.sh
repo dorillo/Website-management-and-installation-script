@@ -320,4 +320,5 @@ initial_install() {
             "$DOMAIN" "$YOOKASSA_WEBHOOK_SECRET_INPUT"
     fi
     printf 'Команда управления: sudo vpn-site\n'
+    finish_admin_bootstrap
 }

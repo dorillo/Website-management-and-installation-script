@@ -193,8 +193,11 @@ collect_installation_settings() {
     fi
     prompt_inn "ИНН для режима VPN" PUBLIC_MODE_1_INN_INPUT
     prompt_inn "ИНН для нейтрального режима" PUBLIC_MODE_2_INN_INPUT
-    PUBLIC_NEUTRAL_SITE_TITLE_INPUT="$BRAND_NAME_INPUT — Ускоритель интернета"
-    PUBLIC_NEUTRAL_SITE_TAGLINE_INPUT="Стабильное подключение и понятное управление доступом"
+    prompt_display_value "Нейтральный заголовок" \
+        "$BRAND_NAME_INPUT — Ускоритель интернета" PUBLIC_NEUTRAL_SITE_TITLE_INPUT 150
+    prompt_display_value "Нейтральный слоган" \
+        "Стабильное подключение и понятное управление доступом" \
+        PUBLIC_NEUTRAL_SITE_TAGLINE_INPUT 300
 
     prompt_validated_email "Email, которому разрешено стать первым администратором" ADMIN_EMAIL_INPUT
 
@@ -284,13 +287,13 @@ edit_environment_file() {
 }
 
 apply_environment_change() {
-    local backup="$1" was_active=0
+    local backup="$1" start_policy="${2:-preserve}" was_active=0
     systemctl is-active --quiet "$SERVICE_NAME" && was_active=1
     if ! validate_application_environment; then
         install -o root -g "$APP_GROUP" -m 0640 "$backup" "$ENV_FILE"
         die "Проверка конфигурации не пройдена; предыдущий файл восстановлен."
     fi
-    if (( was_active == 0 )); then
+    if (( was_active == 0 )) && [[ "$start_policy" != "restart" ]]; then
         ACTIVE_ENV_BACKUP=""
         success "Конфигурация проверена и сохранена. Остановленный сайт не запускался."
         return 0
