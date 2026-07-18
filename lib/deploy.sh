@@ -2,6 +2,7 @@
 
 INSTALLATION_IN_PROGRESS=0
 INSTALLATION_DATABASE_CREATED=0
+PREPARED_SITE_RELEASE=""
 
 install_manager_from_source() {
     local source_directory="$1" digest release staging
@@ -182,9 +183,10 @@ validate_release_tree() {
 
 prepare_site_release() {
     local sha="$1" archive release staging
+    PREPARED_SITE_RELEASE=""
     release="$RELEASES_DIR/$sha"
     if [[ -d "$release" && -x "$release/.venv/bin/python" ]]; then
-        printf '%s\n' "$release"
+        PREPARED_SITE_RELEASE="$release"
         return 0
     fi
     archive="$(mktemp --suffix=.tar.gz)"
@@ -208,7 +210,7 @@ prepare_site_release() {
     find "$staging/.venv/bin" -type f -exec chmod u=rwx,go=rx {} +
     chown -R root:root "$staging"
     mv "$staging" "$release"
-    printf '%s\n' "$release"
+    PREPARED_SITE_RELEASE="$release"
 }
 
 install_systemd_units() {
@@ -287,7 +289,8 @@ initial_install() {
     database_password="$(random_hex 32)"
     create_database "$database_password"
     create_environment_file "$database_password"
-    release="$(prepare_site_release "$sha")"
+    prepare_site_release "$sha"
+    release="$PREPARED_SITE_RELEASE"
     validate_application_environment "$release"
     ln -sfn "$release" "$CURRENT_LINK"
 

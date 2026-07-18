@@ -84,6 +84,9 @@ role_created_line="$(grep -n 'CREATE ROLE vpn_site' "$ROOT/lib/deploy.sh" | cut 
 database_flag_line="$(grep -n '^[[:space:]]*INSTALLATION_DATABASE_CREATED=1' "$ROOT/lib/deploy.sh" | cut -d: -f1)"
 createdb_line="$(grep -n 'runuser -u postgres -- createdb --owner=vpn_site' "$ROOT/lib/deploy.sh" | head -1 | cut -d: -f1)"
 (( role_created_line < database_flag_line && database_flag_line < createdb_line ))
+! grep -Rqs '=.*$(prepare_site_release' "$ROOT/lib"
+grep -q 'release="\$PREPARED_SITE_RELEASE"' "$ROOT/lib/deploy.sh"
+grep -q 'new_release="\$PREPARED_SITE_RELEASE"' "$ROOT/lib/operations.sh"
 
 (
     SCRIPT_DIR="$ROOT"

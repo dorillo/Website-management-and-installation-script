@@ -277,7 +277,8 @@ update_site() {
         return 0
     }
 
-    new_release="$(prepare_site_release "$sha")"
+    prepare_site_release "$sha"
+    new_release="$PREPARED_SITE_RELEASE"
     validate_application_environment "$new_release"
     backup="$(create_backup | tail -1)"
     UPDATE_OLD_RELEASE="$(readlink -f "$CURRENT_LINK")"
