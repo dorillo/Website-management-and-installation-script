@@ -203,8 +203,8 @@ collect_installation_settings() {
     prompt_default "TLS-порт SMTP" "465" SMTP_PORT_INPUT
     validate_integer_range "$SMTP_PORT_INPUT" 1 65535 || die "Некорректный порт SMTP."
     prompt "Имя пользователя SMTP" SMTP_USER_INPUT
-    prompt_secret "Пароль SMTP (не менее 12 символов)" SMTP_PASSWORD_INPUT
-    (( ${#SMTP_PASSWORD_INPUT} >= 12 )) || die "Пароль SMTP слишком короткий для production."
+    prompt_secret "Пароль SMTP (не менее 10 символов)" SMTP_PASSWORD_INPUT
+    (( ${#SMTP_PASSWORD_INPUT} >= 10 )) || die "Пароль SMTP слишком короткий для production."
     prompt_validated_email "Email отправителя" FROM_EMAIL_INPUT
 
     printf '\nНастройка Remnawave\n'

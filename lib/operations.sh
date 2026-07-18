@@ -435,8 +435,8 @@ configure_smtp() {
     prompt_default "TLS-порт SMTP" "$(env_get SMTP_PORT)" port
     validate_integer_range "$port" 1 65535 || die "Некорректный порт SMTP."
     prompt_default "Имя пользователя SMTP" "$(env_get SMTP_USER)" user
-    prompt_secret "Новый пароль SMTP (не менее 12 символов)" password
-    (( ${#password} >= 12 )) || die "Пароль SMTP слишком короткий."
+    prompt_secret "Новый пароль SMTP (не менее 10 символов)" password
+    (( ${#password} >= 10 )) || die "Пароль SMTP слишком короткий."
     prompt_default "Email отправителя" "$(env_get FROM_EMAIL)" from_email
     validate_email "$from_email" || die "Некорректный email отправителя."
     backup="$(backup_environment)"
