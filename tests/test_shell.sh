@@ -53,6 +53,9 @@ validate_integer_range 14 1 3650
 ! validate_integer_range 0 1 3650
 ! validate_integer_range text 1 3650
 
+# The prompt helpers must not shadow a caller's commonly named output variable.
+! grep -Eq 'local .* variable_name=.* value([[:space:]]|$)' "$ROOT/lib/common.sh"
+
 openssl_install_line="$(grep -n 'check_required_commands curl jq openssl' "$ROOT/lib/deploy.sh" | cut -d: -f1)"
 yookassa_secret_line="$(grep -n 'YOOKASSA_WEBHOOK_SECRET_INPUT=.*random_hex' "$ROOT/lib/deploy.sh" | cut -d: -f1)"
 (( yookassa_secret_line > openssl_install_line ))

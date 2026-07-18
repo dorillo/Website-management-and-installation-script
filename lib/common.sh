@@ -124,12 +124,12 @@ pause() {
 }
 
 prompt() {
-    local message="$1" variable_name="$2" value
+    local message="$1" variable_name="$2" prompt_value
     while true; do
         printf '%s: ' "$message" >/dev/tty
-        IFS= read -r value </dev/tty || die "Ввод отменён."
-        if [[ -n "$value" ]]; then
-            printf -v "$variable_name" '%s' "$value"
+        IFS= read -r prompt_value </dev/tty || die "Ввод отменён."
+        if [[ -n "$prompt_value" ]]; then
+            printf -v "$variable_name" '%s' "$prompt_value"
             return 0
         fi
         warn "Необходимо ввести значение."
@@ -137,38 +137,38 @@ prompt() {
 }
 
 prompt_default() {
-    local message="$1" default_value="$2" variable_name="$3" value
+    local message="$1" default_value="$2" variable_name="$3" prompt_value
     printf '%s [%s]: ' "$message" "$default_value" >/dev/tty
-    IFS= read -r value </dev/tty || die "Ввод отменён."
-    printf -v "$variable_name" '%s' "${value:-$default_value}"
+    IFS= read -r prompt_value </dev/tty || die "Ввод отменён."
+    printf -v "$variable_name" '%s' "${prompt_value:-$default_value}"
 }
 
 prompt_optional() {
-    local message="$1" variable_name="$2" value
+    local message="$1" variable_name="$2" prompt_value
     printf '%s (необязательно): ' "$message" >/dev/tty
-    IFS= read -r value </dev/tty || die "Ввод отменён."
-    printf -v "$variable_name" '%s' "$value"
+    IFS= read -r prompt_value </dev/tty || die "Ввод отменён."
+    printf -v "$variable_name" '%s' "$prompt_value"
 }
 
 prompt_optional_default() {
-    local message="$1" default_value="$2" variable_name="$3" value
+    local message="$1" default_value="$2" variable_name="$3" prompt_value
     if [[ -n "$default_value" ]]; then
         printf '%s [%s]: ' "$message" "$default_value" >/dev/tty
     else
         printf '%s (необязательно): ' "$message" >/dev/tty
     fi
-    IFS= read -r value </dev/tty || die "Ввод отменён."
-    printf -v "$variable_name" '%s' "${value:-$default_value}"
+    IFS= read -r prompt_value </dev/tty || die "Ввод отменён."
+    printf -v "$variable_name" '%s' "${prompt_value:-$default_value}"
 }
 
 prompt_secret() {
-    local message="$1" variable_name="$2" value
+    local message="$1" variable_name="$2" prompt_value
     while true; do
         printf '%s: ' "$message" >/dev/tty
-        IFS= read -r -s value </dev/tty || die "Ввод отменён."
+        IFS= read -r -s prompt_value </dev/tty || die "Ввод отменён."
         printf '\n' >/dev/tty
-        if [[ -n "$value" ]]; then
-            printf -v "$variable_name" '%s' "$value"
+        if [[ -n "$prompt_value" ]]; then
+            printf -v "$variable_name" '%s' "$prompt_value"
             return 0
         fi
         warn "Необходимо ввести значение."
