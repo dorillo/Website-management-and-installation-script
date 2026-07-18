@@ -1,0 +1,46 @@
+[Unit]
+Description=Сервис FastAPI сайта VPN Site
+Wants=network-online.target
+After=network-online.target postgresql.service
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=exec
+User=vpn-site
+Group=vpn-site
+WorkingDirectory=/opt/vpn-site/current/backend
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStartPre=/opt/vpn-site-manager/current/bin/envexec.py /etc/vpn-site/vpn-site.env /opt/vpn-site/current/.venv/bin/python -m alembic -c /opt/vpn-site/current/alembic.ini upgrade head
+ExecStart=/opt/vpn-site-manager/current/bin/envexec.py /etc/vpn-site/vpn-site.env /opt/vpn-site/current/.venv/bin/python -m uvicorn main:app --host 127.0.0.1 --port 8000 --workers 1 --proxy-headers --forwarded-allow-ips=127.0.0.1
+Restart=always
+RestartSec=5
+TimeoutStartSec=120
+TimeoutStopSec=30
+KillSignal=SIGTERM
+UMask=0077
+
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateDevices=true
+PrivateTmp=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHome=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectSystem=strict
+RemoveIPC=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

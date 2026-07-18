@@ -1,0 +1,10 @@
+[Unit]
+Description=Ежедневное резервное копирование PostgreSQL и конфигурации VPN Site
+After=postgresql.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/vpn-site backup
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7

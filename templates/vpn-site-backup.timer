@@ -1,0 +1,11 @@
+[Unit]
+Description=Расписание ежедневного резервного копирования VPN Site
+
+[Timer]
+OnCalendar=*-*-* 03:20:00
+RandomizedDelaySec=30m
+Persistent=true
+Unit=vpn-site-backup.service
+
+[Install]
+WantedBy=timers.target
