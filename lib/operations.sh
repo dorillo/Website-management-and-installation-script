@@ -897,6 +897,15 @@ configure_remnawave() {
     apply_environment_change "$backup"
 }
 
+show_yookassa_webhook() {
+    local webhook_secret
+    webhook_secret="$(env_get YOOKASSA_WEBHOOK_SECRET 2>/dev/null || true)"
+    [[ -n "$webhook_secret" ]] || return 0
+    printf '\nУкажите этот webhook в личном кабинете YooKassa:\n'
+    printf 'https://%s/payments/yookassa/webhook?token=%s\n' \
+        "$DOMAIN" "$webhook_secret"
+}
+
 configure_yookassa() {
     local backup shop_id secret webhook_secret
     require_installed
@@ -914,8 +923,7 @@ configure_yookassa() {
         env_set YOOKASSA_SECRET_KEY "$secret"
         env_set YOOKASSA_WEBHOOK_SECRET "$webhook_secret"
         apply_environment_change "$backup"
-        printf '\nУкажите этот webhook в личном кабинете YooKassa:\n'
-        printf 'https://%s/payments/yookassa/webhook?token=%s\n' "$DOMAIN" "$webhook_secret"
+        show_yookassa_webhook
     else
         confirm "Отключить платежи YooKassa?" no || return 0
         backup="$(backup_environment)"

@@ -453,10 +453,7 @@ initial_install() {
     prune_releases
     success "Сайт установлен: https://$DOMAIN"
     printf 'Email первого администратора: %s\n' "$ADMIN_EMAIL_INPUT"
-    if [[ -n "$YOOKASSA_WEBHOOK_SECRET_INPUT" ]]; then
-        printf 'URL webhook YooKassa: https://%s/payments/yookassa/webhook?token=%s\n' \
-            "$DOMAIN" "$YOOKASSA_WEBHOOK_SECRET_INPUT"
-    fi
     printf 'Команда управления: sudo vpn-site\n'
     finish_admin_bootstrap
+    show_yookassa_webhook
 }

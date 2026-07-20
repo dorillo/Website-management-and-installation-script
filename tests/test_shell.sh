@@ -200,6 +200,27 @@ fi
     finish_admin_bootstrap
 )
 
+(
+    # The installation summary must use the token persisted in env, not a
+    # transient wizard variable that can be lost before the final output.
+    # shellcheck source=../lib/operations.sh
+    source "$ROOT/lib/operations.sh"
+    DOMAIN=vpn.example.com
+    env_get() {
+        [[ "$1" == "YOOKASSA_WEBHOOK_SECRET" ]] || return 1
+        printf '%s\n' webhook-token
+    }
+
+    webhook_output="$(show_yookassa_webhook)"
+    [[ "$webhook_output" == *'https://vpn.example.com/payments/yookassa/webhook?token=webhook-token'* ]]
+)
+
+bootstrap_summary_line="$(grep -n '^[[:space:]]*finish_admin_bootstrap$' \
+    "$ROOT/lib/deploy.sh" | cut -d: -f1)"
+webhook_summary_line="$(grep -n '^[[:space:]]*show_yookassa_webhook$' \
+    "$ROOT/lib/deploy.sh" | cut -d: -f1)"
+(( bootstrap_summary_line < webhook_summary_line ))
+
 openssl_install_line="$(grep -n 'check_required_commands curl jq openssl' "$ROOT/lib/deploy.sh" | cut -d: -f1)"
 yookassa_secret_line="$(grep -n 'YOOKASSA_WEBHOOK_SECRET_INPUT=.*random_hex' "$ROOT/lib/deploy.sh" | cut -d: -f1)"
 (( yookassa_secret_line > openssl_install_line ))
