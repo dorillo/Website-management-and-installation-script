@@ -101,9 +101,27 @@ def command_set(path: Path, key: str) -> int:
     return 0
 
 
+def command_unset(path: Path, key: str) -> int:
+    if KEY_PATTERN.fullmatch(key) is None:
+        raise ValueError("invalid variable name")
+    entries = parse(path)
+    lines: list[str] = []
+
+    for entry_key, entry_value in entries:
+        if entry_key == key:
+            continue
+        if entry_key is None:
+            lines.append(entry_value)
+        else:
+            lines.append(f"{entry_key}={entry_value}")
+
+    atomic_write(path, "\n".join(lines) + "\n")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=("get", "set", "validate"))
+    parser.add_argument("command", choices=("get", "set", "unset", "validate"))
     parser.add_argument("path", type=Path)
     parser.add_argument("key", nargs="?")
     arguments = parser.parse_args()
@@ -114,9 +132,11 @@ def main() -> int:
         parse(arguments.path)
         return 0
     if not arguments.key:
-        parser.error("get and set require a key")
+        parser.error("get, set and unset require a key")
     if arguments.command == "get":
         return command_get(arguments.path, arguments.key)
+    if arguments.command == "unset":
+        return command_unset(arguments.path, arguments.key)
     return command_set(arguments.path, arguments.key)
 
 

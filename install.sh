@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 shopt -s inherit_errexit
 
-readonly MANAGER_VERSION="1.2.1"
+readonly MANAGER_VERSION="2.0.0"
 readonly DEFAULT_MANAGER_REPOSITORY="dorillo/Website-management-and-installation-script"
 readonly LEGACY_MANAGER_REPOSITORY="dorillo/vpn-site-manager"
 readonly DEFAULT_MANAGER_REF="main"

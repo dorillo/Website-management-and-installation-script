@@ -1,5 +1,22 @@
 #!/usr/bin/env bash
 
+LEGACY_APPEARANCE_ENV_KEYS=(
+    PUBLIC_COPY_MODE
+    PUBLIC_MODE_1_INN
+    PUBLIC_MODE_2_INN
+    BRAND_NAME
+    SITE_TITLE
+    SITE_TAGLINE
+    LOGO_PATH
+    FAVICON_PATH
+    PUBLIC_NEUTRAL_SITE_TITLE
+    PUBLIC_NEUTRAL_SITE_TAGLINE
+    PUBLIC_NEUTRAL_LOGO_PATH
+    PUBLIC_NEUTRAL_FAVICON_PATH
+)
+
+ENVIRONMENT_MIGRATED=0
+
 envctl_path() {
     if [[ -x "$MANAGER_CURRENT/bin/envctl.py" ]]; then
         printf '%s\n' "$MANAGER_CURRENT/bin/envctl.py"
@@ -26,24 +43,108 @@ env_set() {
     printf '%s' "$value" | "$(envctl_path)" set "$ENV_FILE" "$key"
 }
 
+env_unset() {
+    "$(envctl_path)" unset "$ENV_FILE" "$1"
+}
+
+env_set_default() {
+    local key="$1" value="$2"
+    if ! env_get "$key" >/dev/null 2>&1; then
+        env_set "$key" "$value"
+        ENVIRONMENT_MIGRATED=1
+    fi
+}
+
+release_site_name() {
+    local release="$1" value
+    value="$(awk -F= '$1 == "SITE_NAME" {print substr($0, index($0, "=") + 1)}' \
+        "$release/.env.example")" || return 1
+    [[ -n "$value" && "$value" != *$'\n'* && "$value" != *$'\r'* ]] || return 1
+    printf '%s\n' "$value"
+}
+
+migrate_environment_for_release() {
+    local release="$1" key return_url site_name current_site_name
+    ENVIRONMENT_MIGRATED=0
+    [[ -f "$release/.env.example" ]] || \
+        die "В release отсутствует .env.example; безопасная миграция окружения невозможна."
+
+    # Older releases still consume runtime branding. Keep their values when an
+    # operator deliberately deploys an old ref.
+    if grep -q '^PUBLIC_COPY_MODE=' "$release/.env.example"; then
+        return 0
+    fi
+
+    for key in "${LEGACY_APPEARANCE_ENV_KEYS[@]}"; do
+        if env_get "$key" >/dev/null 2>&1; then
+            env_unset "$key"
+            ENVIRONMENT_MIGRATED=1
+        fi
+    done
+
+    site_name="$(release_site_name "$release")" || \
+        die "В .env.example release отсутствует однозначный SITE_NAME."
+    current_site_name="$(env_get SITE_NAME 2>/dev/null || true)"
+    if [[ "$current_site_name" != "$site_name" ]]; then
+        env_set SITE_NAME "$site_name"
+        ENVIRONMENT_MIGRATED=1
+    fi
+    env_set_default SUBSCRIPTION_NOTIFICATION_BATCH_SIZE 100
+    env_set_default SUBSCRIPTION_NOTIFICATION_CONCURRENCY 5
+    env_set_default SUBSCRIPTION_NOTIFICATION_RETRY_MINUTES 5
+    env_set_default SMTP_MAX_CONCURRENCY 5
+
+    if ! return_url="$(env_get YOOKASSA_RETURN_URL 2>/dev/null)" || \
+       [[ "$return_url" != "https://$DOMAIN/payment-return" ]]; then
+        env_set YOOKASSA_RETURN_URL "https://$DOMAIN/payment-return"
+        ENVIRONMENT_MIGRATED=1
+    fi
+
+    if (( ENVIRONMENT_MIGRATED == 1 )); then
+        info "Env-файл приведён к схеме выбранной версии сайта."
+    fi
+}
+
+validate_environment_schema_for_release() {
+    local release="$1" key failed=0 return_url site_name
+    grep -q '^PUBLIC_COPY_MODE=' "$release/.env.example" && return 0
+    for key in "${LEGACY_APPEARANCE_ENV_KEYS[@]}"; do
+        if env_get "$key" >/dev/null 2>&1; then
+            error "Env-файл содержит удалённую настройку внешнего вида: $key"
+            failed=1
+        fi
+    done
+    for key in SITE_NAME SUBSCRIPTION_NOTIFICATION_BATCH_SIZE \
+        SUBSCRIPTION_NOTIFICATION_CONCURRENCY \
+        SUBSCRIPTION_NOTIFICATION_RETRY_MINUTES SMTP_MAX_CONCURRENCY; do
+        if ! env_get "$key" >/dev/null 2>&1; then
+            error "В env-файле отсутствует настройка новой версии: $key"
+            failed=1
+        fi
+    done
+    site_name="$(release_site_name "$release" 2>/dev/null || true)"
+    if [[ "$(env_get SITE_NAME 2>/dev/null || true)" != "$site_name" ]]; then
+        error "SITE_NAME не совпадает со статическим брендом выбранного release."
+        failed=1
+    fi
+    return_url="$(env_get YOOKASSA_RETURN_URL 2>/dev/null || true)"
+    if [[ "$return_url" != "https://$DOMAIN/payment-return" ]]; then
+        error "YOOKASSA_RETURN_URL должен указывать на https://$DOMAIN/payment-return"
+        failed=1
+    fi
+    (( failed == 0 ))
+}
+
 create_environment_file() {
-    local database_password="$1" temporary
-    temporary="$(mktemp "$CONFIG_DIR/vpn-site.env.XXXXXX")"
-    cat >"$temporary" <<EOF
+    local database_password="$1" release="$2" temporary site_name
+    site_name="$(release_site_name "$release")" || \
+        die "В .env.example release отсутствует однозначный SITE_NAME."
+    validate_no_control_characters "SITE_NAME release" "$site_name"
+    temporary="$(mktemp "$CONFIG_DIR/vpn-site.env.XXXXXX")" || return 1
+    register_temporary_path "$temporary"
+    if ! cat >"$temporary" <<EOF
 # Managed by VPN Site Manager. Values are literal; do not add shell syntax.
-SITE_NAME=$SITE_NAME_INPUT
-PUBLIC_COPY_MODE=$PUBLIC_COPY_MODE_INPUT
-PUBLIC_MODE_1_INN=$PUBLIC_MODE_1_INN_INPUT
-PUBLIC_MODE_2_INN=$PUBLIC_MODE_2_INN_INPUT
-BRAND_NAME=$BRAND_NAME_INPUT
-SITE_TITLE=$SITE_TITLE_INPUT
-SITE_TAGLINE=$SITE_TAGLINE_INPUT
-LOGO_PATH=assets/Logo1.png
-FAVICON_PATH=assets/icon.png
-PUBLIC_NEUTRAL_SITE_TITLE=$PUBLIC_NEUTRAL_SITE_TITLE_INPUT
-PUBLIC_NEUTRAL_SITE_TAGLINE=$PUBLIC_NEUTRAL_SITE_TAGLINE_INPUT
-PUBLIC_NEUTRAL_LOGO_PATH=assets/Logo2.png
-PUBLIC_NEUTRAL_FAVICON_PATH=assets/icon.png
+SITE_NAME=$site_name
 
 ENVIRONMENT=production
 DATABASE_URL=postgresql+asyncpg://vpn_site:${database_password}@127.0.0.1:5432/vpn_site
@@ -51,6 +152,9 @@ ADMIN_BOOTSTRAP_EMAILS=$ADMIN_EMAIL_INPUT
 CORS_ALLOWED_ORIGINS=https://$DOMAIN
 TRUSTED_HOSTS=$DOMAIN
 CLEANUP_INTERVAL_SECONDS=60
+SUBSCRIPTION_NOTIFICATION_BATCH_SIZE=100
+SUBSCRIPTION_NOTIFICATION_CONCURRENCY=5
+SUBSCRIPTION_NOTIFICATION_RETRY_MINUTES=5
 MAX_REQUEST_BODY_BYTES=1048576
 RATE_LIMIT_WINDOW_SECONDS=60
 RATE_LIMIT_REQUESTS=120
@@ -61,6 +165,7 @@ ENABLE_API_DOCS=false
 SMTP_HOST=$SMTP_HOST_INPUT
 SMTP_PORT=$SMTP_PORT_INPUT
 SMTP_TIMEOUT_SECONDS=15
+SMTP_MAX_CONCURRENCY=5
 SMTP_USER=$SMTP_USER_INPUT
 SMTP_PASSWORD=$SMTP_PASSWORD_INPUT
 FROM_EMAIL=$FROM_EMAIL_INPUT
@@ -80,14 +185,20 @@ YOOKASSA_CONFIRMATION_HOSTS=yoomoney.ru,*.yoomoney.ru,yookassa.ru,*.yookassa.ru
 YOOKASSA_SHOP_ID=$YOOKASSA_SHOP_ID_INPUT
 YOOKASSA_SECRET_KEY=$YOOKASSA_SECRET_KEY_INPUT
 YOOKASSA_WEBHOOK_SECRET=$YOOKASSA_WEBHOOK_SECRET_INPUT
-YOOKASSA_RETURN_URL=https://$DOMAIN
+YOOKASSA_RETURN_URL=https://$DOMAIN/payment-return
 PAYMENT_CURRENCY=RUB
 UNPAID_PAYMENT_LIFETIME_HOURS=24
 PAYMENT_PROCESSING_RETRY_AFTER_MINUTES=15
 EOF
-    chown root:"$APP_GROUP" "$temporary"
-    chmod 0640 "$temporary"
-    mv -f "$temporary" "$ENV_FILE"
+    then
+        rm -f -- "$temporary"
+        return 1
+    fi
+    if ! chown root:"$APP_GROUP" "$temporary" || \
+       ! chmod 0640 "$temporary" || ! mv -f "$temporary" "$ENV_FILE"; then
+        rm -f -- "$temporary"
+        return 1
+    fi
 }
 
 prompt_validated_domain() {
@@ -115,46 +226,14 @@ prompt_validated_email() {
     done
 }
 
-prompt_display_value() {
-    local message="$1" default_value="$2" variable_name="$3" maximum="$4" value
-    while true; do
-        prompt_default "$message" "$default_value" value
-        validate_no_control_characters "$message" "$value"
-        if (( ${#value} >= 1 && ${#value} <= maximum )); then
-            printf -v "$variable_name" '%s' "$value"
-            return 0
-        fi
-        warn "Допустимая длина: от 1 до $maximum символов."
-    done
-}
-
-prompt_inn() {
-    local message="$1" variable_name="$2" value
-    while true; do
-        prompt_optional "$message" value
-        if [[ -z "$value" || "$value" =~ ^[0-9]{12}$ ]]; then
-            printf -v "$variable_name" '%s' "$value"
-            return 0
-        fi
-        warn "ИНН должен быть пустым или содержать ровно 12 цифр."
-    done
-}
-
-prompt_inn_default() {
-    local message="$1" default_value="$2" variable_name="$3" value
-    while true; do
-        prompt_optional_default "$message" "$default_value" value
-        if [[ -z "$value" || "$value" =~ ^[0-9]{12}$ ]]; then
-            printf -v "$variable_name" '%s' "$value"
-            return 0
-        fi
-        warn "ИНН должен быть пустым или содержать ровно 12 цифр."
-    done
-}
-
 normalize_json_object() {
     local value="$1" variable_name="$2" json_output
-    json_output="$(jq -cer 'if type == "object" then . else error("expected JSON object") end' \
+    json_output="$(jq -cer '
+        if type == "object" and all(.[]; type == "string")
+        then .
+        else error("expected an object with string values")
+        end
+    ' \
         <<<"$value" 2>/dev/null)" || return 1
     printf -v "$variable_name" '%s' "$json_output"
 }
@@ -201,24 +280,6 @@ collect_installation_settings() {
     validate_ref "$value" || die "Некорректная Git-ссылка."
     SITE_REF="$value"
 
-    prompt_display_value "Название бренда (без VPN)" "Батя" BRAND_NAME_INPUT 80
-    prompt_display_value "Название сайта" "$BRAND_NAME_INPUT VPN" SITE_NAME_INPUT 100
-    prompt_display_value "Заголовок вкладки браузера" "$SITE_NAME_INPUT" SITE_TITLE_INPUT 150
-    prompt_display_value "Слоган сайта" "Надёжный VPN под контролем Бати" SITE_TAGLINE_INPUT 300
-    prompt_default "Режим публичного текста (1 = VPN, 2 = нейтральный)" "1" PUBLIC_COPY_MODE_INPUT
-    [[ "$PUBLIC_COPY_MODE_INPUT" == "1" || "$PUBLIC_COPY_MODE_INPUT" == "2" ]] || \
-        die "PUBLIC_COPY_MODE должен иметь значение 1 или 2."
-    if [[ "$PUBLIC_COPY_MODE_INPUT" == "2" && "$BRAND_NAME_INPUT" =~ [Vv][Pp][Nn] ]]; then
-        die "В нейтральном режиме название бренда не должно содержать VPN."
-    fi
-    prompt_inn "ИНН для режима VPN" PUBLIC_MODE_1_INN_INPUT
-    prompt_inn "ИНН для нейтрального режима" PUBLIC_MODE_2_INN_INPUT
-    prompt_display_value "Нейтральный заголовок" \
-        "$BRAND_NAME_INPUT — Ускоритель интернета" PUBLIC_NEUTRAL_SITE_TITLE_INPUT 150
-    prompt_display_value "Нейтральный слоган" \
-        "Стабильное подключение и понятное управление доступом" \
-        PUBLIC_NEUTRAL_SITE_TAGLINE_INPUT 300
-
     prompt_validated_email "Email, которому разрешено стать первым администратором" ADMIN_EMAIL_INPUT
 
     printf '\nНастройка SMTP (требуется для отправки кодов входа)\n'
@@ -226,8 +287,13 @@ collect_installation_settings() {
     prompt_default "TLS-порт SMTP" "465" SMTP_PORT_INPUT
     validate_integer_range "$SMTP_PORT_INPUT" 1 65535 || die "Некорректный порт SMTP."
     prompt "Имя пользователя SMTP" SMTP_USER_INPUT
+    validate_ascii_graphic "$SMTP_USER_INPUT" || \
+        die "Имя пользователя SMTP должно состоять из печатных ASCII-символов без пробелов."
     prompt_secret "Пароль SMTP (не менее 10 символов)" SMTP_PASSWORD_INPUT
     (( ${#SMTP_PASSWORD_INPUT} >= 10 )) || die "Пароль SMTP слишком короткий для production."
+    validate_no_control_characters "Пароль SMTP" "$SMTP_PASSWORD_INPUT"
+    validate_ascii_printable "$SMTP_PASSWORD_INPUT" || \
+        die "Пароль SMTP должен состоять из печатных ASCII-символов."
     prompt_validated_email "Email отправителя" FROM_EMAIL_INPUT
 
     printf '\nНастройка Remnawave\n'
@@ -235,6 +301,8 @@ collect_installation_settings() {
     validate_https_url "$REMNAWAVE_API_URL_INPUT" || die "URL API Remnawave должен использовать HTTPS."
     prompt_secret "Токен Remnawave (не менее 32 символов)" REMNAWAVE_TOKEN_INPUT
     (( ${#REMNAWAVE_TOKEN_INPUT} >= 32 )) || die "Токен Remnawave слишком короткий для production."
+    validate_ascii_graphic "$REMNAWAVE_TOKEN_INPUT" || \
+        die "Токен Remnawave должен состоять из печатных ASCII-символов без пробелов."
     prompt_secret_optional \
         'Cookies Remnawave в формате JSON, например {"XX@2X1XXX":"XXXX4!XX"}' \
         REMNAWAVE_COOKIES_JSON_INPUT
@@ -260,13 +328,15 @@ collect_yookassa_settings() {
         die "Некорректный идентификатор магазина YooKassa."
     prompt_secret "Секретный ключ YooKassa (не менее 32 символов)" YOOKASSA_SECRET_KEY_INPUT
     (( ${#YOOKASSA_SECRET_KEY_INPUT} >= 32 )) || die "Секретный ключ YooKassa слишком короткий."
+    validate_ascii_graphic "$YOOKASSA_SECRET_KEY_INPUT" || \
+        die "Секретный ключ YooKassa должен состоять из печатных ASCII-символов без пробелов."
 }
 
 validate_application_environment() {
     local release="${1:-$CURRENT_LINK}"
     [[ -x "$release/.venv/bin/python" ]] || die "В $release отсутствует окружение Python."
     (
-        cd "$release/backend"
+        cd "$release/backend" || exit 1
         "$(envexec_path)" "$ENV_FILE" "$release/.venv/bin/python" \
             -c 'import config; print("configuration is valid")'
     )
@@ -283,9 +353,10 @@ backup_environment() {
 
 show_environment_summary() {
     require_installed
-    printf 'Режим публичного текста: %s\n' "$(env_get PUBLIC_COPY_MODE)"
-    printf 'Бренд: %s\n' "$(env_get BRAND_NAME)"
+    printf 'Название backend: %s\n' "$(env_get SITE_NAME)"
     printf 'Хост SMTP: %s:%s\n' "$(env_get SMTP_HOST)" "$(env_get SMTP_PORT)"
+    printf 'Параллельные SMTP-отправки: %s\n' \
+        "$(env_get SMTP_MAX_CONCURRENCY 2>/dev/null || printf 5)"
     printf 'URL Remnawave: %s\n' "$(env_get REMNAWAVE_API_URL)"
     if [[ -n "$(env_get YOOKASSA_SHOP_ID || true)" ]]; then
         printf 'YooKassa: настроена\n'

@@ -71,6 +71,38 @@ class EnvctlTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "spaces are forbidden"):
                     envctl.command_set(path, "A")
 
+    def test_unset_is_atomic_and_preserves_other_entries(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = self.make_file(directory, "# comment\nA=one\nB=two\n")
+            os.chmod(path, 0o640)
+            chown = getattr(os, "chown", None)
+            chown_patch = (
+                mock.patch.object(os, "chown", create=True)
+                if chown is None
+                else mock.patch.object(os, "chown")
+            )
+            with chown_patch:
+                self.assertEqual(envctl.command_unset(path, "A"), 0)
+            self.assertEqual(
+                path.read_text(encoding="utf-8"),
+                "# comment\nB=two\n",
+            )
+            if os.name == "posix":
+                self.assertEqual(path.stat().st_mode & 0o777, 0o640)
+
+    def test_unset_missing_key_is_idempotent(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = self.make_file(directory, "A=one\n")
+            chown = getattr(os, "chown", None)
+            chown_patch = (
+                mock.patch.object(os, "chown", create=True)
+                if chown is None
+                else mock.patch.object(os, "chown")
+            )
+            with chown_patch:
+                self.assertEqual(envctl.command_unset(path, "MISSING"), 0)
+            self.assertEqual(path.read_text(encoding="utf-8"), "A=one\n")
+
 
 class EnvexecTests(unittest.TestCase):
     def run_main(self, content: str) -> tuple[list[str], dict[str, str]]:

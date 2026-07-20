@@ -35,6 +35,7 @@ FIREWALL_MANAGED="${FIREWALL_MANAGED:-false}"
 SSH_PORT="${SSH_PORT:-22}"
 BOOTSTRAP_REPOSITORY=""
 ACTIVE_ENV_BACKUP=""
+CREATED_DATABASE_BACKUP=""
 UPDATE_IN_PROGRESS=0
 UPDATE_OLD_RELEASE=""
 UPDATE_BACKUP=""
@@ -42,6 +43,16 @@ UPDATE_OLD_SHA=""
 UPDATE_OLD_REF=""
 UPDATE_OLD_SITE_REF=""
 UPDATE_WAS_ACTIVE=0
+UPDATE_ENV_BACKUP=""
+UPDATE_RUNTIME_BACKUP=""
+UPDATE_DATABASE_DIRTY=0
+UPDATE_BACKUP_TIMER_WAS_ENABLED=0
+UPDATE_DEFAULT_NGINX_STATE=""
+RESTORE_IN_PROGRESS=0
+RESTORE_SAFETY_BACKUP=""
+RESTORE_WAS_ACTIVE=0
+RESTORE_NGINX_BACKUP=""
+RESTORE_DATABASE_DIRTY=0
 DOMAIN_CHANGE_IN_PROGRESS=0
 DOMAIN_CHANGE_ENV_BACKUP=""
 DOMAIN_CHANGE_NGINX_BACKUP=""
@@ -50,6 +61,11 @@ DOMAIN_CHANGE_OLD_DOMAIN=""
 DOMAIN_CHANGE_OLD_EMAIL=""
 DOMAIN_CHANGE_WAS_ACTIVE=0
 INSTALLATION_DEFAULT_NGINX_TARGET=""
+INSTALLATION_DEFAULT_NGINX_STATE=""
+INSTALLATION_DEFAULT_NGINX_BACKUP=""
+INSTALLATION_UFW_CHANGED=0
+INSTALLATION_UFW_WAS_ENABLED=0
+INSTALLATION_UFW_BACKUP=""
 INSTALLATION_CERTIFICATE_CREATED=0
 INSTALLATION_RENEWAL_HOOK_CHANGED=0
 INSTALLATION_RENEWAL_HOOK_BACKUP=""
@@ -69,6 +85,10 @@ cleanup() {
     fi
     if (( ${UPDATE_IN_PROGRESS:-0} == 1 )); then
         rollback_update_from_trap || true
+    fi
+    if (( ${RESTORE_IN_PROGRESS:-0} == 1 )) && \
+       declare -F rollback_restore_from_trap >/dev/null 2>&1; then
+        rollback_restore_from_trap || true
     fi
     if (( ${INSTALLATION_IN_PROGRESS:-0} == 1 )); then
         rollback_incomplete_install || true
@@ -143,24 +163,6 @@ prompt_default() {
     printf -v "$variable_name" '%s' "${prompt_value:-$default_value}"
 }
 
-prompt_optional() {
-    local message="$1" variable_name="$2" prompt_value
-    printf '%s (необязательно): ' "$message" >/dev/tty
-    IFS= read -r prompt_value </dev/tty || die "Ввод отменён."
-    printf -v "$variable_name" '%s' "$prompt_value"
-}
-
-prompt_optional_default() {
-    local message="$1" default_value="$2" variable_name="$3" prompt_value
-    if [[ -n "$default_value" ]]; then
-        printf '%s [%s]: ' "$message" "$default_value" >/dev/tty
-    else
-        printf '%s (необязательно): ' "$message" >/dev/tty
-    fi
-    IFS= read -r prompt_value </dev/tty || die "Ввод отменён."
-    printf -v "$variable_name" '%s' "${prompt_value:-$default_value}"
-}
-
 prompt_secret() {
     local message="$1" variable_name="$2" prompt_value
     while true; do
@@ -211,6 +213,16 @@ validate_no_control_characters() {
         die "$name не должно содержать переносы строк."
     [[ "$value" == "${value# }" && "$value" == "${value% }" ]] || \
         die "$name не должно начинаться или заканчиваться пробелом."
+}
+
+validate_ascii_graphic() {
+    local LC_ALL=C
+    [[ "$1" =~ ^[[:graph:]]+$ ]]
+}
+
+validate_ascii_printable() {
+    local LC_ALL=C
+    [[ "$1" =~ ^[[:print:]]+$ ]]
 }
 
 validate_domain() {
@@ -287,24 +299,25 @@ validate_manager_config() {
 
 write_manager_config() {
     local temporary
-    install -d -o root -g "$APP_GROUP" -m 0750 "$CONFIG_DIR"
-    temporary="$(mktemp "$CONFIG_DIR/manager.conf.XXXXXX")"
-    {
-        printf 'SITE_REPOSITORY=%s\n' "$(shell_quote "$SITE_REPOSITORY")"
-        printf 'SITE_REF=%s\n' "$(shell_quote "$SITE_REF")"
-        printf 'MANAGER_REPOSITORY=%s\n' "$(shell_quote "$MANAGER_REPOSITORY")"
-        printf 'MANAGER_REF=%s\n' "$(shell_quote "$MANAGER_REF")"
-        printf 'DOMAIN=%s\n' "$(shell_quote "$DOMAIN")"
-        printf 'LETSENCRYPT_EMAIL=%s\n' "$(shell_quote "$LETSENCRYPT_EMAIL")"
-        printf 'CURRENT_SHA=%s\n' "$(shell_quote "$CURRENT_SHA")"
-        printf 'CURRENT_REF=%s\n' "$(shell_quote "$CURRENT_REF")"
-        printf 'BACKUP_RETENTION_DAYS=%s\n' "$(shell_quote "$BACKUP_RETENTION_DAYS")"
-        printf 'FIREWALL_MANAGED=%s\n' "$(shell_quote "$FIREWALL_MANAGED")"
-        printf 'SSH_PORT=%s\n' "$(shell_quote "$SSH_PORT")"
-    } >"$temporary"
-    chown root:"$APP_GROUP" "$temporary"
-    chmod 0640 "$temporary"
-    mv -f "$temporary" "$MANAGER_CONFIG"
+    install -d -o root -g "$APP_GROUP" -m 0750 "$CONFIG_DIR" || return 1
+    temporary="$(mktemp "$CONFIG_DIR/manager.conf.XXXXXX")" || return 1
+    if ! printf '%s\n' \
+        "SITE_REPOSITORY=$(shell_quote "$SITE_REPOSITORY")" \
+        "SITE_REF=$(shell_quote "$SITE_REF")" \
+        "MANAGER_REPOSITORY=$(shell_quote "$MANAGER_REPOSITORY")" \
+        "MANAGER_REF=$(shell_quote "$MANAGER_REF")" \
+        "DOMAIN=$(shell_quote "$DOMAIN")" \
+        "LETSENCRYPT_EMAIL=$(shell_quote "$LETSENCRYPT_EMAIL")" \
+        "CURRENT_SHA=$(shell_quote "$CURRENT_SHA")" \
+        "CURRENT_REF=$(shell_quote "$CURRENT_REF")" \
+        "BACKUP_RETENTION_DAYS=$(shell_quote "$BACKUP_RETENTION_DAYS")" \
+        "FIREWALL_MANAGED=$(shell_quote "$FIREWALL_MANAGED")" \
+        "SSH_PORT=$(shell_quote "$SSH_PORT")" >"$temporary" || \
+       ! chown root:"$APP_GROUP" "$temporary" || \
+       ! chmod 0640 "$temporary" || ! mv -f "$temporary" "$MANAGER_CONFIG"; then
+        rm -f -- "$temporary"
+        return 1
+    fi
 }
 
 is_installed() {
@@ -379,6 +392,19 @@ main() {
     fi
     [[ -n "$BOOTSTRAP_REPOSITORY" ]] && MANAGER_REPOSITORY="$BOOTSTRAP_REPOSITORY"
     install_manager_from_source "$SCRIPT_DIR"
+    if ! is_installed && [[ -f "/etc/systemd/system/$SERVICE_NAME" ]] && \
+       systemctl is-active --quiet "$SERVICE_NAME"; then
+        warn "Останавливается backend от прерванной установки."
+        systemctl stop "$SERVICE_NAME" || \
+            die "Не удалось остановить backend прерванной установки."
+    fi
+    if ! is_installed && declare -F validation_override_path >/dev/null 2>&1 && \
+       [[ -f "$(validation_override_path)" ]]; then
+        warn "Удаляется validation override от прерванной установки."
+        systemctl stop "$SERVICE_NAME" || true
+        remove_validation_service_override || \
+            die "Не удалось удалить validation override прерванной установки."
+    fi
 
     case "$command" in
         install) initial_install ;;

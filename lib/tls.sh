@@ -1,24 +1,44 @@
 #!/usr/bin/env bash
 
 render_nginx_config() {
-    local domain="$1" destination="$2" template
+    local domain="$1" destination="$2" release="${3:-$CURRENT_LINK}"
+    local access_mode="${4:-public}" template
     validate_domain "$domain" || die "Отказ от создания конфигурации для некорректного домена."
+    [[ "$access_mode" == "public" || "$access_mode" == "local-validation" ]] || \
+        die "Некорректный режим доступа Nginx: $access_mode"
     template="$MANAGER_CURRENT/templates/nginx.conf"
     [[ -f "$template" ]] || template="$SCRIPT_DIR/templates/nginx.conf"
     [[ -f "$template" ]] || die "Шаблон Nginx отсутствует."
-    sed "s/__DOMAIN__/$domain/g" "$template" >"$destination"
+    if [[ -f "$release/frontend/index.html" ]] && \
+       grep -Eq "<script[^>]+src=['\"]/?env\\.js['\"]" \
+           "$release/frontend/index.html"; then
+        sed "s/__DOMAIN__/$domain/g" "$template"
+    else
+        sed -e '/# __LEGACY_ENV_JS_BEGIN__/,/# __LEGACY_ENV_JS_END__/d' \
+            -e "s/__DOMAIN__/$domain/g" "$template"
+    fi | awk -v access_mode="$access_mode" '
+        /# __LOCAL_VALIDATION_ACCESS__/ {
+            if (access_mode == "local-validation") {
+                print "    allow 127.0.0.1;"
+                print "    allow ::1;"
+                print "    deny all;"
+            }
+            next
+        }
+        { print }
+    ' >"$destination" || return 1
 }
 
 restore_nginx_site() {
     local backup="$1" default_target="${2:-}"
     if [[ -n "$backup" && -f "$backup" ]]; then
-        install -o root -g root -m 0644 "$backup" "$NGINX_SITE"
-        ln -sfn "$NGINX_SITE" "$NGINX_SITE_LINK"
+        install -o root -g root -m 0644 "$backup" "$NGINX_SITE" || return 1
+        ln -sfn "$NGINX_SITE" "$NGINX_SITE_LINK" || return 1
     else
-        rm -f "$NGINX_SITE_LINK" "$NGINX_SITE"
+        rm -f "$NGINX_SITE_LINK" "$NGINX_SITE" || return 1
     fi
     if [[ -n "$default_target" ]]; then
-        ln -sfn "$default_target" /etc/nginx/sites-enabled/default
+        ln -sfn "$default_target" /etc/nginx/sites-enabled/default || return 1
     fi
     if ! nginx -t; then
         error "Предыдущая конфигурация Nginx также не проходит проверку."
@@ -33,8 +53,8 @@ restore_nginx_site() {
 write_http_challenge_config() {
     local domain="$1" temporary backup=""
     validate_domain "$domain" || die "Некорректный домен сертификата."
-    temporary="$(mktemp /etc/nginx/sites-available/vpn-site.XXXXXX)"
-    cat >"$temporary" <<EOF
+    temporary="$(mktemp /etc/nginx/sites-available/vpn-site.XXXXXX)" || return 1
+    if ! cat >"$temporary" <<EOF
 server {
     listen 80;
     listen [::]:80;
@@ -50,13 +70,24 @@ server {
     }
 }
 EOF
-    chmod 0644 "$temporary"
-    if [[ -f "$NGINX_SITE" ]]; then
-        backup="$(mktemp)"
-        cp -a "$NGINX_SITE" "$backup"
+    then
+        rm -f -- "$temporary"
+        return 1
     fi
-    mv -f "$temporary" "$NGINX_SITE"
-    ln -sfn "$NGINX_SITE" "$NGINX_SITE_LINK"
+    chmod 0644 "$temporary" || { rm -f -- "$temporary"; return 1; }
+    if [[ -f "$NGINX_SITE" ]]; then
+        backup="$(mktemp)" || { rm -f -- "$temporary"; return 1; }
+        if ! cp -a "$NGINX_SITE" "$backup"; then
+            rm -f -- "$temporary" "$backup"
+            return 1
+        fi
+    fi
+    if ! mv -f "$temporary" "$NGINX_SITE" || \
+       ! ln -sfn "$NGINX_SITE" "$NGINX_SITE_LINK"; then
+        restore_nginx_site "$backup" || true
+        rm -f -- "$temporary" "$backup"
+        return 1
+    fi
     if ! nginx -t; then
         restore_nginx_site "$backup" || true
         rm -f -- "$backup"
@@ -67,7 +98,8 @@ EOF
         rm -f -- "$backup"
         return 1
     fi
-    rm -f -- "$backup"
+    rm -f -- "$backup" || warn "Не удалось удалить временную копию Nginx."
+    return 0
 }
 
 check_domain_dns() {
@@ -86,9 +118,9 @@ issue_certificate() {
     local domain="$1" email="$2" backup=""
     check_domain_dns "$domain" || return 1
     if [[ -f "$NGINX_SITE" ]]; then
-        backup="$(mktemp)"
+        backup="$(mktemp)" || return 1
         register_temporary_path "$backup"
-        cp -a "$NGINX_SITE" "$backup"
+        cp -a "$NGINX_SITE" "$backup" || return 1
     fi
     if ! write_http_challenge_config "$domain"; then
         rm -f -- "$backup"
@@ -158,20 +190,31 @@ restore_initial_tls_state() {
 }
 
 activate_tls_nginx() {
-    local domain="$1" temporary backup="" default_target=""
-    temporary="$(mktemp /etc/nginx/sites-available/vpn-site.XXXXXX)"
-    render_nginx_config "$domain" "$temporary"
-    chmod 0644 "$temporary"
+    local domain="$1" access_mode="${2:-public}" release="${3:-$CURRENT_LINK}"
+    local temporary backup="" default_target=""
+    temporary="$(mktemp /etc/nginx/sites-available/vpn-site.XXXXXX)" || return 1
+    if ! render_nginx_config "$domain" "$temporary" "$release" "$access_mode" || \
+       ! chmod 0644 "$temporary"; then
+        rm -f -- "$temporary"
+        return 1
+    fi
     if [[ -f "$NGINX_SITE" ]]; then
-        backup="$(mktemp)"
-        cp -a "$NGINX_SITE" "$backup"
+        backup="$(mktemp)" || { rm -f -- "$temporary"; return 1; }
+        if ! cp -a "$NGINX_SITE" "$backup"; then
+            rm -f -- "$temporary" "$backup"
+            return 1
+        fi
     fi
     if [[ -L /etc/nginx/sites-enabled/default ]]; then
         default_target="$(readlink /etc/nginx/sites-enabled/default)"
     fi
-    mv -f "$temporary" "$NGINX_SITE"
-    ln -sfn "$NGINX_SITE" "$NGINX_SITE_LINK"
-    rm -f /etc/nginx/sites-enabled/default
+    if ! mv -f "$temporary" "$NGINX_SITE" || \
+       ! ln -sfn "$NGINX_SITE" "$NGINX_SITE_LINK" || \
+       ! rm -f /etc/nginx/sites-enabled/default; then
+        restore_nginx_site "$backup" "$default_target" || true
+        rm -f -- "$temporary" "$backup"
+        return 1
+    fi
     if ! nginx -t; then
         restore_nginx_site "$backup" "$default_target" || true
         rm -f -- "$backup"
@@ -182,7 +225,8 @@ activate_tls_nginx() {
         rm -f -- "$backup"
         return 1
     fi
-    rm -f -- "$backup"
+    rm -f -- "$backup" || warn "Не удалось удалить временную копию Nginx."
+    return 0
 }
 
 clear_domain_change_state() {
@@ -227,11 +271,13 @@ rollback_domain_change_from_trap() {
 }
 
 configure_initial_certificate() {
+    local access_mode="${1:-public}"
     track_initial_tls_state
     issue_certificate "$DOMAIN" "$LETSENCRYPT_EMAIL" || \
         die "Не удалось выпустить сертификат Let's Encrypt. Проверьте DNS и порты 80/443."
     install_renewal_hook
-    activate_tls_nginx "$DOMAIN" || die "Созданная TLS-конфигурация Nginx некорректна."
+    activate_tls_nginx "$DOMAIN" "$access_mode" || \
+        die "Созданная TLS-конфигурация Nginx некорректна."
     systemctl enable --now certbot.timer
     success "Сертификат Let's Encrypt установлен; автоматическое продление включено."
 }
@@ -269,12 +315,16 @@ change_domain() {
     local old_domain="$DOMAIN" old_email="$LETSENCRYPT_EMAIL"
     local new_domain new_email env_backup nginx_backup manager_backup was_active=0
     require_installed
+    grep -q '^PUBLIC_COPY_MODE=' "$CURRENT_LINK/.env.example" || \
+        die "Автоматическая смена домена недоступна для статического frontend: canonical, Open Graph, robots.txt и sitemap.xml входят в release."
     prompt_validated_domain
     new_domain="$DOMAIN"
     DOMAIN="$old_domain"
     [[ "$new_domain" != "$old_domain" ]] || die "Домен не изменился."
     prompt_default "Email для Let's Encrypt" "$old_email" new_email
     validate_email "$new_email" || die "Некорректный адрес электронной почты."
+    validate_release_public_domain "$CURRENT_LINK" "$new_domain" || \
+        die "Сначала разверните frontend release со статическими canonical, robots.txt и sitemap.xml для $new_domain."
     printf '\nВо время выпуска нового сертификата сайт будет кратковременно недоступен.\n'
     confirm "Перенести сайт с $old_domain на $new_domain?" no || return 0
 
@@ -301,7 +351,11 @@ change_domain() {
 
     env_set CORS_ALLOWED_ORIGINS "https://$new_domain"
     env_set TRUSTED_HOSTS "$new_domain"
-    env_set YOOKASSA_RETURN_URL "https://$new_domain"
+    if grep -q '^PUBLIC_COPY_MODE=' "$CURRENT_LINK/.env.example"; then
+        env_set YOOKASSA_RETURN_URL "https://$new_domain"
+    else
+        env_set YOOKASSA_RETURN_URL "https://$new_domain/payment-return"
+    fi
     DOMAIN="$new_domain"
     LETSENCRYPT_EMAIL="$new_email"
     write_manager_config
@@ -319,6 +373,9 @@ change_domain() {
     fi
     clear_domain_change_state
     success "Домен сайта изменён на https://$new_domain"
+    if [[ -n "$(env_get YOOKASSA_WEBHOOK_SECRET || true)" ]]; then
+        warn "Обновите webhook в YooKassa на https://$new_domain/payments/yookassa/webhook?token=<текущий YOOKASSA_WEBHOOK_SECRET>."
+    fi
     warn "Старый сертификат сохранён. Отзывайте или удаляйте его только после проверки переноса DNS."
 }
 
@@ -330,7 +387,11 @@ certificate_menu() {
         printf '1. Состояние сертификата\n'
         printf '2. Тестовое продление\n'
         printf '3. Продлить сейчас\n'
-        printf '4. Изменить домен сайта\n'
+        if grep -q '^PUBLIC_COPY_MODE=' "$CURRENT_LINK/.env.example"; then
+            printf '4. Изменить домен сайта\n'
+        else
+            printf '4. Смена домена недоступна для статического frontend\n'
+        fi
         printf '0. Назад\n\n'
         printf 'Выберите пункт: ' >/dev/tty
         IFS= read -r choice </dev/tty
@@ -338,7 +399,14 @@ certificate_menu() {
             1) show_certificate_status; pause ;;
             2) test_certificate_renewal; pause ;;
             3) renew_certificate_now; pause ;;
-            4) change_domain; pause ;;
+            4)
+                if grep -q '^PUBLIC_COPY_MODE=' "$CURRENT_LINK/.env.example"; then
+                    change_domain
+                else
+                    warn "Домен новой версии задаётся статическими файлами release и не переносится частично."
+                fi
+                pause
+                ;;
             0) return 0 ;;
             *) warn "Неизвестный пункт меню."; pause ;;
         esac

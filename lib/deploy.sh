@@ -76,9 +76,39 @@ update_operating_system() {
     fi
 }
 
+capture_installation_firewall_state() {
+    INSTALLATION_UFW_BACKUP="$(mktemp -d)"
+    register_temporary_path "$INSTALLATION_UFW_BACKUP"
+    rsync -a /etc/ufw/ "$INSTALLATION_UFW_BACKUP/" || return 1
+    if grep -Eq '^ENABLED=yes$' /etc/ufw/ufw.conf; then
+        INSTALLATION_UFW_WAS_ENABLED=1
+    else
+        INSTALLATION_UFW_WAS_ENABLED=0
+    fi
+    INSTALLATION_UFW_CHANGED=1
+}
+
+restore_installation_firewall_state() {
+    local failed=0
+    (( INSTALLATION_UFW_CHANGED == 1 )) || return 0
+    ufw --force disable || failed=1
+    rsync -a --delete "$INSTALLATION_UFW_BACKUP/" /etc/ufw/ || failed=1
+    if (( INSTALLATION_UFW_WAS_ENABLED == 1 )); then
+        ufw --force enable || failed=1
+    else
+        ufw --force disable || failed=1
+    fi
+    INSTALLATION_UFW_CHANGED=0
+    INSTALLATION_UFW_WAS_ENABLED=0
+    INSTALLATION_UFW_BACKUP=""
+    (( failed == 0 ))
+}
+
 configure_firewall() {
     [[ "$FIREWALL_MANAGED" == "true" ]] || return 0
     validate_integer_range "$SSH_PORT" 1 65535 || die "Некорректный порт SSH: $SSH_PORT"
+    capture_installation_firewall_state || \
+        die "Не удалось сохранить исходное состояние UFW."
     info "Настраивается UFW для SSH на порту $SSH_PORT, а также для HTTP и HTTPS..."
     ufw allow "${SSH_PORT}/tcp" comment 'SSH managed by vpn-site'
     ufw allow 'Nginx Full'
@@ -129,7 +159,7 @@ install_python_314() {
     jobs="$(nproc)"
     (( jobs > 4 )) && jobs=4
     (
-        cd "$source"
+        cd "$source" || exit 1
         ./configure --prefix=/usr/local --with-ensurepip=install
         make -j "$jobs"
         make altinstall
@@ -171,14 +201,53 @@ SQL
     runuser -u postgres -- createdb --owner=vpn_site --encoding=UTF8 vpn_site
 }
 
-validate_release_tree() {
+validate_release_contract() {
     local release="$1" required
-    for required in alembic.ini requirements.txt backend/main.py backend/config.py \
-        frontend/index.html deploy; do
+    for required in .env.example alembic.ini requirements.txt backend/main.py \
+        backend/config.py frontend/index.html deploy; do
         [[ -e "$release/$required" ]] || die "В архиве сайта отсутствует $required."
     done
+    if ! grep -q '^PUBLIC_COPY_MODE=' "$release/.env.example"; then
+        for required in frontend/robots.txt frontend/sitemap.xml \
+            frontend/js/app/main.js deploy/systemd/vpn-site.service \
+            deploy/nginx/vpn-site.conf.example; do
+            [[ -f "$release/$required" ]] || \
+                die "В новой версии сайта отсутствует $required."
+        done
+        [[ ! -e "$release/frontend/env.js" ]] || \
+            die "Новая версия сайта не должна содержать frontend/env.js."
+        ! grep -Fq '/env.js' "$release/frontend/index.html" || \
+            die "Новая версия сайта всё ещё подключает удалённый frontend/env.js."
+    fi
+}
+
+validate_release_tree() {
+    local release="$1"
+    validate_release_contract "$release"
     ! find "$release" -type l -print -quit | grep -q . || \
         die "Архивы сайта с символьными ссылками не принимаются."
+}
+
+validate_release_public_domain() {
+    local release="$1" domain="$2" canonical expected
+    expected="https://$domain/"
+    grep -q '^PUBLIC_COPY_MODE=' "$release/.env.example" && return 0
+    canonical="$(sed -nE \
+        's#.*<link rel="canonical" href="(https://[^"]+/)".*#\1#p' \
+        "$release/frontend/index.html" | head -1)"
+    [[ "$canonical" == "$expected" ]] || {
+        error "Статический canonical release ($canonical) не совпадает с $expected."
+        return 1
+    }
+    grep -Fqx "Sitemap: https://$domain/sitemap.xml" \
+        "$release/frontend/robots.txt" || {
+        error "robots.txt release не соответствует домену $domain."
+        return 1
+    }
+    grep -Fq "<loc>$expected</loc>" "$release/frontend/sitemap.xml" || {
+        error "sitemap.xml release не соответствует домену $domain."
+        return 1
+    }
 }
 
 prepare_site_release() {
@@ -186,6 +255,12 @@ prepare_site_release() {
     PREPARED_SITE_RELEASE=""
     release="$RELEASES_DIR/$sha"
     if [[ -d "$release" && -x "$release/.venv/bin/python" ]]; then
+        # Manager 1.x generated env.js even for releases that no longer use it.
+        if [[ -f "$release/.env.example" ]] && \
+           ! grep -q '^PUBLIC_COPY_MODE=' "$release/.env.example"; then
+            rm -f -- "$release/frontend/env.js"
+        fi
+        validate_release_contract "$release"
         PREPARED_SITE_RELEASE="$release"
         return 0
     fi
@@ -198,8 +273,6 @@ prepare_site_release() {
         --no-same-owner --no-same-permissions
     validate_release_tree "$staging"
 
-    # Production is same-origin. Never ship a developer localhost API URL.
-    printf 'window.APP_ENV = {\n    API_BASE_URL: ""\n};\n' >"$staging/frontend/env.js"
     python3.14 -m venv "$staging/.venv"
     "$staging/.venv/bin/python" -m pip install --disable-pip-version-check \
         --require-hashes --requirement "$staging/requirements.txt"
@@ -214,6 +287,9 @@ prepare_site_release() {
 }
 
 install_systemd_units() {
+    local timer_policy="${1:-enable-timer}"
+    [[ "$timer_policy" == "enable-timer" || "$timer_policy" == "defer-enable" ]] || \
+        die "Некорректный режим установки systemd units."
     install -o root -g root -m 0644 \
         "$MANAGER_CURRENT/templates/vpn-site.service" \
         "/etc/systemd/system/$SERVICE_NAME"
@@ -227,7 +303,9 @@ install_systemd_units() {
         /etc/systemd/system/vpn-site-backup.service \
         /etc/systemd/system/vpn-site-backup.timer
     systemctl daemon-reload
-    systemctl enable vpn-site-backup.timer
+    if [[ "$timer_policy" == "enable-timer" ]]; then
+        systemctl enable vpn-site-backup.timer
+    fi
 }
 
 prune_releases() {
@@ -242,30 +320,53 @@ prune_releases() {
 }
 
 rollback_incomplete_install() {
+    local default_path=/etc/nginx/sites-enabled/default
     (( INSTALLATION_IN_PROGRESS == 1 )) || return 0
     INSTALLATION_IN_PROGRESS=0
     warn "Удаляется незавершённое состояние приложения. Установленные пакеты Ubuntu сохраняются."
-    systemctl disable --now "$SERVICE_NAME" vpn-site-backup.timer 2>/dev/null || true
+    systemctl disable --now "$SERVICE_NAME" 2>/dev/null || true
+    if systemctl is-active --quiet "$SERVICE_NAME"; then
+        error "Backend не удалось остановить; validation override, локальный Nginx и данные оставлены без изменений."
+        return 1
+    fi
+    systemctl disable --now vpn-site-backup.timer 2>/dev/null || true
+    if declare -F remove_validation_service_override >/dev/null 2>&1; then
+        remove_validation_service_override || true
+    fi
     rm -f "/etc/systemd/system/$SERVICE_NAME" \
         /etc/systemd/system/vpn-site-backup.service \
         /etc/systemd/system/vpn-site-backup.timer \
         "$NGINX_SITE_LINK" "$NGINX_SITE"
     restore_initial_tls_state
-    if [[ -n "$INSTALLATION_DEFAULT_NGINX_TARGET" ]]; then
-        ln -sfn "$INSTALLATION_DEFAULT_NGINX_TARGET" /etc/nginx/sites-enabled/default
+    case "$INSTALLATION_DEFAULT_NGINX_STATE" in
+        symlink)
+            rm -f -- "$default_path"
+            ln -sfn "$INSTALLATION_DEFAULT_NGINX_TARGET" "$default_path"
+            ;;
+        file)
+            rm -f -- "$default_path"
+            cp -a -- "$INSTALLATION_DEFAULT_NGINX_BACKUP" "$default_path"
+            ;;
+        absent) rm -f -- "$default_path" ;;
+        "") ;;
+    esac
+    if nginx -t >/dev/null 2>&1; then
+        systemctl reload nginx || true
     fi
-    nginx -t >/dev/null 2>&1 && systemctl reload nginx || true
     if (( INSTALLATION_DATABASE_CREATED == 1 )); then
         runuser -u postgres -- dropdb --if-exists --force vpn_site || true
         runuser -u postgres -- psql -c 'DROP ROLE IF EXISTS vpn_site' || true
     fi
     rm -rf --one-file-system -- "$APP_ROOT"
     rm -f "$ENV_FILE" "$MANAGER_CONFIG"
+    restore_installation_firewall_state || \
+        warn "Не удалось полностью восстановить исходное состояние UFW."
     systemctl daemon-reload || true
 }
 
 initial_install() {
-    local database_password sha release
+    local database_password sha release default_backup default_target
+    local default_path=/etc/nginx/sites-enabled/default
     is_installed && die "Сайт уже установлен. Используйте раздел обновления."
     [[ ! -e "$ENV_FILE" && ! -e "$CURRENT_LINK" && ! -e "$APP_ROOT" && \
        ! -e "$NGINX_SITE" && ! -e "$NGINX_SITE_LINK" ]] || \
@@ -274,7 +375,7 @@ initial_install() {
     collect_installation_settings
     read_github_token
     update_operating_system
-    check_required_commands curl jq openssl tar flock
+    check_required_commands curl jq openssl rsync tar flock
     validate_remnawave_cookies_input
     SECRET_KEY_INPUT="$(random_hex 48)"
     if [[ -n "$YOOKASSA_SHOP_ID_INPUT" ]]; then
@@ -289,30 +390,66 @@ initial_install() {
 
     database_password="$(random_hex 32)"
     create_database "$database_password"
-    create_environment_file "$database_password"
     prepare_site_release "$sha"
     release="$PREPARED_SITE_RELEASE"
+    validate_release_public_domain "$release" "$DOMAIN" || \
+        die "Выбранный release подготовлен для другого публичного домена."
+    create_environment_file "$database_password" "$release"
+    validate_environment_schema_for_release "$release"
     validate_application_environment "$release"
     ln -sfn "$release" "$CURRENT_LINK"
 
     CURRENT_SHA="$sha"
     CURRENT_REF="$SITE_REF"
-    write_manager_config
-    install_systemd_units
-    if [[ -L /etc/nginx/sites-enabled/default ]]; then
-        INSTALLATION_DEFAULT_NGINX_TARGET="$(readlink /etc/nginx/sites-enabled/default)"
+    install_systemd_units defer-enable
+    if [[ -L "$default_path" ]]; then
+        default_target="$(readlink "$default_path")"
+        INSTALLATION_DEFAULT_NGINX_STATE="symlink"
+        INSTALLATION_DEFAULT_NGINX_TARGET="$default_target"
+    elif [[ -e "$default_path" ]]; then
+        default_backup="$(mktemp)"
+        register_temporary_path "$default_backup"
+        cp -a -- "$default_path" "$default_backup"
+        INSTALLATION_DEFAULT_NGINX_STATE="file"
+        INSTALLATION_DEFAULT_NGINX_BACKUP="$default_backup"
+    else
+        INSTALLATION_DEFAULT_NGINX_STATE="absent"
     fi
-    configure_initial_certificate
-    systemctl enable --now "$SERVICE_NAME"
-    wait_for_local_health 60 || die "Приложение не прошло локальную проверку работоспособности."
-    wait_for_public_health 30 || warn "Публичная проверка HTTPS не пройдена; локально приложение работает."
-    systemctl start vpn-site-backup.timer
-    clear_github_token
+    configure_initial_certificate local-validation
+    if ! install_validation_service_override || \
+       ! systemctl start "$SERVICE_NAME" || \
+       ! wait_for_local_health 60 || \
+       ! validate_startup_prerequisites || \
+       ! verify_local_https_routes; then
+        die "Приложение не прошло изолированную проверку установки."
+    fi
+    stop_validation_backend || die "Validation backend не удалось безопасно остановить."
+
+    # The fresh database has no provider work to reconcile. Exercise the real
+    # lifespan while the service is disabled and Nginx is still local-only.
+    if ! systemctl start "$SERVICE_NAME" || ! wait_for_local_health 60; then
+        die "Production-start не удался; незавершённая установка будет удалена."
+    fi
+    # manager.conf is the durable commit marker. Public Nginx and boot-time
+    # enablement happen only after it exists and rollback has been disarmed.
+    write_manager_config
     INSTALLATION_IN_PROGRESS=0
     INSTALLATION_DEFAULT_NGINX_TARGET=""
+    INSTALLATION_DEFAULT_NGINX_STATE=""
+    INSTALLATION_DEFAULT_NGINX_BACKUP=""
     INSTALLATION_CERTIFICATE_CREATED=0
     INSTALLATION_RENEWAL_HOOK_CHANGED=0
     INSTALLATION_RENEWAL_HOOK_BACKUP=""
+    INSTALLATION_UFW_CHANGED=0
+    INSTALLATION_UFW_WAS_ENABLED=0
+    INSTALLATION_UFW_BACKUP=""
+    systemctl enable "$SERVICE_NAME" vpn-site-backup.timer || \
+        die "Сайт работает, но не удалось включить автозапуск; выполните sudo vpn-site repair."
+    activate_tls_nginx "$DOMAIN" || \
+        die "Установка сохранена, но Nginx не открыл публичный доступ; выполните sudo vpn-site start."
+    wait_for_public_health 30 || warn "Публичная проверка HTTPS не пройдена; локально приложение работает."
+    systemctl start vpn-site-backup.timer
+    clear_github_token
     prune_releases
     success "Сайт установлен: https://$DOMAIN"
     printf 'Email первого администратора: %s\n' "$ADMIN_EMAIL_INPUT"
