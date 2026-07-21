@@ -234,7 +234,7 @@ normalize_remnawave_cookies() {
         if type == "object" and all(to_entries[];
             (.key | length > 0) and
             (.value | type == "string") and
-            ((.key + .value) | test("[\\u0000-\\u001f\\u007f]") | not)
+            ((.key + .value | explode) | all(. >= 32 and . != 127))
         )
         then .
         else error("expected an object with string values")
@@ -264,7 +264,7 @@ normalize_remnawave_cookies() {
 
     json_output="$(jq -ncer --arg name "$name" --arg value "$cookie_value" '
         if ($name | length > 0) and
-           (($name + $value) | test("[\\u0000-\\u001f\\u007f]") | not)
+           (($name + $value | explode) | all(. >= 32 and . != 127))
         then {($name): $value}
         else error("invalid cookie")
         end
