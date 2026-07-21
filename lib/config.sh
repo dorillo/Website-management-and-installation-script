@@ -226,27 +226,61 @@ prompt_validated_email() {
     done
 }
 
-normalize_json_object() {
-    local value="$1" variable_name="$2" json_output
-    json_output="$(jq -cer '
-        if type == "object" and all(.[]; type == "string")
+normalize_remnawave_cookies() {
+    local value="$1" variable_name="$2" json_output name cookie_value
+
+    # Keep the original JSON-object format backwards compatible.
+    if json_output="$(jq -cer '
+        if type == "object" and all(to_entries[];
+            (.key | length > 0) and
+            (.value | type == "string") and
+            ((.key + .value) | test("[\\u0000-\\u001f\\u007f]") | not)
+        )
         then .
         else error("expected an object with string values")
         end
-    ' \
-        <<<"$value" 2>/dev/null)" || return 1
+    ' <<<"$value" 2>/dev/null)"; then
+        printf -v "$variable_name" '%s' "$json_output"
+        return 0
+    fi
+
+    # The Remnawave reverse-proxy exposes the Nginx matcher as
+    # "~*name=value".  ~* is an Nginx regex modifier, not part of the cookie.
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    if [[ "$value" == \{*\} ]]; then
+        value="${value:1:${#value}-2}"
+        value="${value#"${value%%[![:space:]]*}"}"
+        value="${value%"${value##*[![:space:]]}"}"
+    fi
+    if [[ "$value" == \"*\" ]]; then
+        value="$(jq -er 'if type == "string" then . else error("expected a string") end' \
+            <<<"$value" 2>/dev/null)" || return 1
+    fi
+    [[ "$value" == '~*'* ]] && value="${value:2}"
+    [[ "$value" == *=* ]] || return 1
+    name="${value%%=*}"
+    cookie_value="${value#*=}"
+
+    json_output="$(jq -ncer --arg name "$name" --arg value "$cookie_value" '
+        if ($name | length > 0) and
+           (($name + $value) | test("[\\u0000-\\u001f\\u007f]") | not)
+        then {($name): $value}
+        else error("invalid cookie")
+        end
+    ' 2>/dev/null)" || return 1
     printf -v "$variable_name" '%s' "$json_output"
 }
 
 validate_remnawave_cookies_input() {
     local normalized
     while true; do
-        if normalize_json_object "$REMNAWAVE_COOKIES_JSON_INPUT" normalized; then
+        if normalize_remnawave_cookies "$REMNAWAVE_COOKIES_JSON_INPUT" normalized; then
             REMNAWAVE_COOKIES_JSON_INPUT="$normalized"
             return 0
         fi
-        warn 'Cookies Remnawave должны быть корректным JSON-объектом, например {"name":"value"}.'
-        prompt_secret_optional "Cookies Remnawave в формате JSON" REMNAWAVE_COOKIES_JSON_INPUT
+        warn 'Введите cookie как name=value (без ~*, кавычек и фигурных скобок) либо как JSON {"name":"value"}.'
+        prompt_secret_optional "Cookie Remnawave: name=value или JSON" REMNAWAVE_COOKIES_JSON_INPUT
         [[ -n "$REMNAWAVE_COOKIES_JSON_INPUT" ]] || REMNAWAVE_COOKIES_JSON_INPUT="{}"
     done
 }
@@ -304,7 +338,7 @@ collect_installation_settings() {
     validate_ascii_graphic "$REMNAWAVE_TOKEN_INPUT" || \
         die "Токен Remnawave должен состоять из печатных ASCII-символов без пробелов."
     prompt_secret_optional \
-        'Cookies Remnawave в формате JSON, например {"XX@2X1XXX":"XXXX4!XX"}' \
+        'Cookie Remnawave: name=value (можно вставить строку Nginx "~*name=value")' \
         REMNAWAVE_COOKIES_JSON_INPUT
     if [[ -z "$REMNAWAVE_COOKIES_JSON_INPUT" ]]; then
         REMNAWAVE_COOKIES_JSON_INPUT="{}"

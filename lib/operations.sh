@@ -885,10 +885,10 @@ configure_remnawave() {
     validate_ascii_graphic "$token" || \
         die "Токен Remnawave должен состоять из печатных ASCII-символов без пробелов."
     prompt_secret_optional \
-        "Новые cookies Remnawave в формате JSON (Enter — оставить текущие)" cookies
+        "Новая cookie Remnawave: name=value или JSON (Enter — оставить текущую)" cookies
     [[ -n "$cookies" ]] || cookies="$(env_get REMNAWAVE_COOKIES_JSON)"
-    normalize_json_object "$cookies" cookies || \
-        die "Значение cookies должно быть корректным JSON-объектом."
+    normalize_remnawave_cookies "$cookies" cookies || \
+        die 'Введите cookie как name=value (без ~*, кавычек и фигурных скобок) либо как JSON {"name":"value"}.'
     backup="$(backup_environment)"
     ACTIVE_ENV_BACKUP="$backup"
     env_set REMNAWAVE_API_URL "$url"

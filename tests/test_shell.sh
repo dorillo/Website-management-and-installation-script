@@ -84,7 +84,7 @@ grep -Fq 'finish_admin_bootstrap' "$ROOT/lib/deploy.sh"
     source "$ROOT/lib/config.sh"
     jq() { printf '%s\n' '{"XX@2X1XXX":"XXXX4!XX"}'; }
     normalized=""
-    normalize_json_object '{ "XX@2X1XXX": "XXXX4!XX" }' normalized
+    normalize_remnawave_cookies '{ "XX@2X1XXX": "XXXX4!XX" }' normalized
     [[ "$normalized" == '{"XX@2X1XXX":"XXXX4!XX"}' ]]
 )
 
@@ -92,11 +92,21 @@ if command -v jq >/dev/null 2>&1; then
     # shellcheck source=../lib/config.sh
     source "$ROOT/lib/config.sh"
     normalized=""
-    normalize_json_object '{ "XX@2X1XXX": "XXXX4!XX" }' normalized
+    normalize_remnawave_cookies '{ "XX@2X1XXX": "XXXX4!XX" }' normalized
     [[ "$normalized" == '{"XX@2X1XXX":"XXXX4!XX"}' ]]
-    ! normalize_json_object '["not", "an", "object"]' normalized
-    ! normalize_json_object '{"cookie": 42}' normalized
-    ! normalize_json_object 'invalid JSON' normalized
+    normalize_remnawave_cookies 'aEmFnBcC=WbYWpixX' normalized
+    [[ "$normalized" == '{"aEmFnBcC":"WbYWpixX"}' ]]
+    normalize_remnawave_cookies '"~*aEmFnBcC=WbYWpixX"' normalized
+    [[ "$normalized" == '{"aEmFnBcC":"WbYWpixX"}' ]]
+    normalize_remnawave_cookies '{"~*aEmFnBcC=WbYWpixX"}' normalized
+    [[ "$normalized" == '{"aEmFnBcC":"WbYWpixX"}' ]]
+    normalize_remnawave_cookies 'cookie=value=with=equals' normalized
+    [[ "$normalized" == '{"cookie":"value=with=equals"}' ]]
+    normalize_remnawave_cookies 'cookie=value~*suffix' normalized
+    [[ "$normalized" == '{"cookie":"value~*suffix"}' ]]
+    ! normalize_remnawave_cookies '["not", "an", "object"]' normalized
+    ! normalize_remnawave_cookies '{"cookie": 42}' normalized
+    ! normalize_remnawave_cookies 'invalid input' normalized
 fi
 
 (
