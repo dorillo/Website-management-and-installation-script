@@ -99,6 +99,7 @@ class CrossRepositoryContractTests(unittest.TestCase):
             "CORS_ALLOWED_ORIGINS",
             "DATABASE_URL",
             "FROM_EMAIL",
+            "PUBLIC_SITE_URL",
             "REMNAWAVE_API_URL",
             "REMNAWAVE_COOKIES_JSON",
             "REMNAWAVE_TOKEN",

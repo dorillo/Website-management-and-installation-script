@@ -897,6 +897,16 @@ configure_remnawave() {
     apply_environment_change "$backup"
 }
 
+configure_public_site_url() {
+    local backup
+    require_installed
+    prompt_public_site_url
+    backup="$(backup_environment)"
+    ACTIVE_ENV_BACKUP="$backup"
+    env_set PUBLIC_SITE_URL "$PUBLIC_SITE_URL_INPUT"
+    apply_environment_change "$backup"
+}
+
 show_yookassa_webhook() {
     local webhook_secret
     webhook_secret="$(env_get YOOKASSA_WEBHOOK_SECRET 2>/dev/null || true)"
@@ -1030,9 +1040,10 @@ environment_menu() {
         printf '2. Remnawave\n'
         printf '3. YooKassa\n'
         printf '4. Ограничения запросов и рабочие лимиты\n'
-        printf '5. Завершить выдачу прав первого администратора\n'
-        printf '6. Безопасная сводка конфигурации\n'
-        printf '7. Редактировать полный env-файл\n'
+        printf '5. Публичный URL сайта для ссылок в письмах\n'
+        printf '6. Завершить выдачу прав первого администратора\n'
+        printf '7. Безопасная сводка конфигурации\n'
+        printf '8. Редактировать полный env-файл\n'
         printf '0. Назад\n\n'
         printf 'Выберите пункт: ' >/dev/tty
         IFS= read -r choice </dev/tty
@@ -1041,9 +1052,10 @@ environment_menu() {
             2) configure_remnawave; pause ;;
             3) configure_yookassa; pause ;;
             4) configure_limits; pause ;;
-            5) finish_admin_bootstrap; pause ;;
-            6) show_environment_summary; pause ;;
-            7) edit_environment_file; pause ;;
+            5) configure_public_site_url; pause ;;
+            6) finish_admin_bootstrap; pause ;;
+            7) show_environment_summary; pause ;;
+            8) edit_environment_file; pause ;;
             0) return 0 ;;
             *) warn "Неизвестный пункт меню."; pause ;;
         esac

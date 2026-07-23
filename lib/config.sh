@@ -64,7 +64,7 @@ release_site_name() {
 }
 
 migrate_environment_for_release() {
-    local release="$1" key return_url site_name current_site_name
+    local release="$1" key public_site_url return_url site_name current_site_name
     ENVIRONMENT_MIGRATED=0
     [[ -f "$release/.env.example" ]] || \
         die "В release отсутствует .env.example; безопасная миграция окружения невозможна."
@@ -94,6 +94,14 @@ migrate_environment_for_release() {
     env_set_default SUBSCRIPTION_NOTIFICATION_RETRY_MINUTES 5
     env_set_default SMTP_MAX_CONCURRENCY 5
 
+    if grep -q '^PUBLIC_SITE_URL=' "$release/.env.example"; then
+        public_site_url="$(env_get PUBLIC_SITE_URL 2>/dev/null || true)"
+        if [[ -z "$public_site_url" ]]; then
+            env_set PUBLIC_SITE_URL "https://$DOMAIN"
+            ENVIRONMENT_MIGRATED=1
+        fi
+    fi
+
     if ! return_url="$(env_get YOOKASSA_RETURN_URL 2>/dev/null)" || \
        [[ "$return_url" != "https://$DOMAIN/payment-return" ]]; then
         env_set YOOKASSA_RETURN_URL "https://$DOMAIN/payment-return"
@@ -106,7 +114,7 @@ migrate_environment_for_release() {
 }
 
 validate_environment_schema_for_release() {
-    local release="$1" key failed=0 return_url site_name
+    local release="$1" key failed=0 public_site_url return_url site_name
     grep -q '^PUBLIC_COPY_MODE=' "$release/.env.example" && return 0
     for key in "${LEGACY_APPEARANCE_ENV_KEYS[@]}"; do
         if env_get "$key" >/dev/null 2>&1; then
@@ -126,6 +134,13 @@ validate_environment_schema_for_release() {
     if [[ "$(env_get SITE_NAME 2>/dev/null || true)" != "$site_name" ]]; then
         error "SITE_NAME не совпадает со статическим брендом выбранного release."
         failed=1
+    fi
+    if grep -q '^PUBLIC_SITE_URL=' "$release/.env.example"; then
+        public_site_url="$(env_get PUBLIC_SITE_URL 2>/dev/null || true)"
+        if [[ "$public_site_url" != "https://$DOMAIN" ]]; then
+            error "PUBLIC_SITE_URL должен указывать на https://$DOMAIN"
+            failed=1
+        fi
     fi
     return_url="$(env_get YOOKASSA_RETURN_URL 2>/dev/null || true)"
     if [[ "$return_url" != "https://$DOMAIN/payment-return" ]]; then
@@ -150,6 +165,7 @@ ENVIRONMENT=production
 DATABASE_URL=postgresql+asyncpg://vpn_site:${database_password}@127.0.0.1:5432/vpn_site
 ADMIN_BOOTSTRAP_EMAILS=$ADMIN_EMAIL_INPUT
 CORS_ALLOWED_ORIGINS=https://$DOMAIN
+PUBLIC_SITE_URL=$PUBLIC_SITE_URL_INPUT
 TRUSTED_HOSTS=$DOMAIN
 CLEANUP_INTERVAL_SECONDS=60
 SUBSCRIPTION_NOTIFICATION_BATCH_SIZE=100
@@ -223,6 +239,19 @@ prompt_validated_email() {
             return 0
         fi
         warn "Введите корректный адрес электронной почты."
+    done
+}
+
+prompt_public_site_url() {
+    local default_value="https://$DOMAIN" value
+    while true; do
+        prompt_default "URL сайта для ссылок в письмах" "$default_value" value
+        value="${value%/}"
+        if [[ "$value" == "$default_value" ]]; then
+            PUBLIC_SITE_URL_INPUT="$value"
+            return 0
+        fi
+        warn "URL должен совпадать с публичным доменом сайта: $default_value"
     done
 }
 
@@ -305,6 +334,7 @@ collect_installation_settings() {
 
     printf '\nПервоначальная настройка сайта\n\n'
     prompt_validated_domain
+    PUBLIC_SITE_URL_INPUT="https://$DOMAIN"
     prompt_validated_email "Email для Let's Encrypt" LETSENCRYPT_EMAIL
 
     prompt_default "Приватный репозиторий GitHub" "$SITE_REPOSITORY" value
@@ -388,6 +418,8 @@ backup_environment() {
 show_environment_summary() {
     require_installed
     printf 'Название backend: %s\n' "$(env_get SITE_NAME)"
+    printf 'Публичный URL сайта: %s\n' \
+        "$(env_get PUBLIC_SITE_URL 2>/dev/null || printf 'не задан')"
     printf 'Хост SMTP: %s:%s\n' "$(env_get SMTP_HOST)" "$(env_get SMTP_PORT)"
     printf 'Параллельные SMTP-отправки: %s\n' \
         "$(env_get SMTP_MAX_CONCURRENCY 2>/dev/null || printf 5)"

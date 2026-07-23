@@ -71,6 +71,10 @@ grep -Fq "printf '%s [y/n]: '" "$ROOT/lib/common.sh"
 ! grep -Fq 'configure_public_settings' "$ROOT/lib/operations.sh"
 ! grep -Fq 'API_BASE_URL' "$ROOT/lib/deploy.sh"
 grep -Fq 'SITE_NAME=$site_name' "$ROOT/lib/config.sh"
+grep -Fq 'PUBLIC_SITE_URL=$PUBLIC_SITE_URL_INPUT' "$ROOT/lib/config.sh"
+grep -Fq 'PUBLIC_SITE_URL_INPUT="https://$DOMAIN"' "$ROOT/lib/config.sh"
+grep -Fq 'prompt_public_site_url' "$ROOT/lib/config.sh"
+grep -Fq 'configure_public_site_url' "$ROOT/lib/operations.sh"
 grep -Fq 'REMNAWAVE_COOKIES_JSON=$REMNAWAVE_COOKIES_JSON_INPUT' "$ROOT/lib/config.sh"
 grep -Fq 'prompt_secret_optional' "$ROOT/lib/config.sh"
 grep -Fq 'validate_remnawave_cookies_input' "$ROOT/lib/deploy.sh"
@@ -110,12 +114,37 @@ if command -v jq >/dev/null 2>&1; then
 fi
 
 (
+    # The mail-link origin is explicit, normalized, and cannot diverge from
+    # the domain covered by the managed Nginx and TLS configuration.
+    # shellcheck source=../lib/config.sh
+    source "$ROOT/lib/config.sh"
+    DOMAIN=vpn.example.com
+    attempts=0
+    prompt_default() {
+        local output_name="$3" response
+        attempts=$((attempts + 1))
+        if (( attempts == 1 )); then
+            response=https://attacker.example.com
+        else
+            response=https://vpn.example.com/
+        fi
+        printf -v "$output_name" '%s' "$response"
+    }
+    warn() { :; }
+
+    prompt_public_site_url
+    (( attempts == 2 ))
+    [[ "$PUBLIC_SITE_URL_INPUT" == https://vpn.example.com ]]
+)
+
+(
     # shellcheck source=../lib/config.sh
     source "$ROOT/lib/config.sh"
     sandbox="$(mktemp -d)"
     trap 'rm -rf -- "$sandbox"' EXIT
     mkdir -p "$sandbox/release"
-    printf 'SITE_NAME=Батя VPN\n' >"$sandbox/release/.env.example"
+    printf 'SITE_NAME=Батя VPN\nPUBLIC_SITE_URL=https://YOUR.PUBLIC.HOSTNAME\n' \
+        >"$sandbox/release/.env.example"
     declare -A values=(
         [SITE_NAME]='Legacy backend name'
         [PUBLIC_COPY_MODE]=2
@@ -142,8 +171,38 @@ fi
     [[ "${values[SUBSCRIPTION_NOTIFICATION_CONCURRENCY]}" == 5 ]]
     [[ "${values[SUBSCRIPTION_NOTIFICATION_RETRY_MINUTES]}" == 5 ]]
     [[ "${values[SMTP_MAX_CONCURRENCY]}" == 5 ]]
+    [[ "${values[PUBLIC_SITE_URL]}" == https://vpn.example.com ]]
     [[ "${values[YOOKASSA_RETURN_URL]}" == \
         https://vpn.example.com/payment-return ]]
+)
+
+(
+    # A configured public URL is never silently replaced during an update.
+    # shellcheck source=../lib/config.sh
+    source "$ROOT/lib/config.sh"
+    sandbox="$(mktemp -d)"
+    trap 'rm -rf -- "$sandbox"' EXIT
+    mkdir -p "$sandbox/release"
+    printf 'SITE_NAME=Батя VPN\nPUBLIC_SITE_URL=https://YOUR.PUBLIC.HOSTNAME\n' \
+        >"$sandbox/release/.env.example"
+    declare -A values=(
+        [SITE_NAME]='Батя VPN'
+        [PUBLIC_SITE_URL]=https://unexpected.example.com
+        [YOOKASSA_RETURN_URL]=https://vpn.example.com/payment-return
+    )
+    DOMAIN=vpn.example.com
+    env_get() {
+        [[ -v "values[$1]" ]] || return 1
+        printf '%s\n' "${values[$1]}"
+    }
+    env_set() { values["$1"]="$2"; }
+    env_unset() { unset 'values[$1]'; }
+    info() { :; }
+
+    migrate_environment_for_release "$sandbox/release"
+    [[ "${values[PUBLIC_SITE_URL]}" == https://unexpected.example.com ]]
+    ! validate_environment_schema_for_release "$sandbox/release" \
+        >/dev/null 2>&1
 )
 
 (
@@ -160,6 +219,27 @@ fi
 
     apply_environment_change /unused/backup restart
     (( restarted == 1 ))
+)
+
+(
+    # shellcheck source=../lib/operations.sh
+    source "$ROOT/lib/operations.sh"
+    DOMAIN=vpn.example.com
+    set_key=unset
+    set_value=unset
+    applied_backup=unset
+    require_installed() { :; }
+    prompt_public_site_url() {
+        PUBLIC_SITE_URL_INPUT=https://vpn.example.com
+    }
+    backup_environment() { printf '%s\n' /tmp/env-backup; }
+    env_set() { set_key="$1"; set_value="$2"; }
+    apply_environment_change() { applied_backup="$1"; }
+
+    configure_public_site_url
+    [[ "$set_key" == PUBLIC_SITE_URL ]]
+    [[ "$set_value" == https://vpn.example.com ]]
+    [[ "$applied_backup" == /tmp/env-backup ]]
 )
 
 (
