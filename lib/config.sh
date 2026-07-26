@@ -16,6 +16,7 @@ LEGACY_APPEARANCE_ENV_KEYS=(
 )
 
 ENVIRONMENT_MIGRATED=0
+DEFAULT_MAIL_FROM_NAME="Батя"
 
 envctl_path() {
     if [[ -x "$MANAGER_CURRENT/bin/envctl.py" ]]; then
@@ -55,16 +56,56 @@ env_set_default() {
     fi
 }
 
-release_site_name() {
-    local release="$1" value
-    value="$(awk -F= '$1 == "SITE_NAME" {print substr($0, index($0, "=") + 1)}' \
-        "$release/.env.example")" || return 1
+release_environment_value() {
+    local release="$1" key="$2" value
+    value="$(awk -F= -v key="$key" '
+        $1 == key {
+            if (found) exit 2
+            value = substr($0, index($0, "=") + 1)
+            found = 1
+        }
+        END {
+            if (!found) exit 1
+            print value
+        }
+    ' "$release/.env.example")" || return 1
     [[ -n "$value" && "$value" != *$'\n'* && "$value" != *$'\r'* ]] || return 1
     printf '%s\n' "$value"
 }
 
+release_site_name() {
+    release_environment_value "$1" SITE_NAME
+}
+
+release_mail_from_name() {
+    release_environment_value "$1" MAIL_FROM_NAME
+}
+
+validate_mail_from_name() {
+    local value="$1" lower
+    local LC_ALL=C.utf8
+    lower="${value,,}"
+    [[ -n "$value" && ${#value} -le 100 ]] || return 1
+    [[ "$value" == "${value# }" && "$value" == "${value% }" ]] || return 1
+    [[ ! "$value" =~ [[:cntrl:]] ]] || return 1
+    [[ "$lower" != *vpn* ]]
+}
+
+prompt_mail_from_name() {
+    local message="$1" default_value="$2" variable_name="$3" value
+    while true; do
+        prompt_default "$message" "$default_value" value
+        if validate_mail_from_name "$value"; then
+            printf -v "$variable_name" '%s' "$value"
+            return 0
+        fi
+        warn "Имя должно содержать от 1 до 100 символов, не содержать управляющих символов или VPN и не начинаться/заканчиваться пробелом."
+    done
+}
+
 migrate_environment_for_release() {
     local release="$1" key public_site_url return_url site_name current_site_name
+    local mail_from_name current_mail_from_name
     ENVIRONMENT_MIGRATED=0
     [[ -f "$release/.env.example" ]] || \
         die "В release отсутствует .env.example; безопасная миграция окружения невозможна."
@@ -94,6 +135,18 @@ migrate_environment_for_release() {
     env_set_default SUBSCRIPTION_NOTIFICATION_RETRY_MINUTES 5
     env_set_default SMTP_MAX_CONCURRENCY 5
 
+    if grep -q '^MAIL_FROM_NAME=' "$release/.env.example"; then
+        mail_from_name="$(release_mail_from_name "$release")" || \
+            die "В .env.example release отсутствует однозначный MAIL_FROM_NAME."
+        validate_mail_from_name "$mail_from_name" || \
+            die "MAIL_FROM_NAME в .env.example release не является безопасным нейтральным именем."
+        current_mail_from_name="$(env_get MAIL_FROM_NAME 2>/dev/null || true)"
+        if [[ -z "$current_mail_from_name" ]]; then
+            env_set MAIL_FROM_NAME "$mail_from_name"
+            ENVIRONMENT_MIGRATED=1
+        fi
+    fi
+
     if grep -q '^PUBLIC_SITE_URL=' "$release/.env.example"; then
         public_site_url="$(env_get PUBLIC_SITE_URL 2>/dev/null || true)"
         if [[ -z "$public_site_url" ]]; then
@@ -115,6 +168,7 @@ migrate_environment_for_release() {
 
 validate_environment_schema_for_release() {
     local release="$1" key failed=0 public_site_url return_url site_name
+    local mail_from_name
     grep -q '^PUBLIC_COPY_MODE=' "$release/.env.example" && return 0
     for key in "${LEGACY_APPEARANCE_ENV_KEYS[@]}"; do
         if env_get "$key" >/dev/null 2>&1; then
@@ -134,6 +188,13 @@ validate_environment_schema_for_release() {
     if [[ "$(env_get SITE_NAME 2>/dev/null || true)" != "$site_name" ]]; then
         error "SITE_NAME не совпадает со статическим брендом выбранного release."
         failed=1
+    fi
+    if grep -q '^MAIL_FROM_NAME=' "$release/.env.example"; then
+        mail_from_name="$(env_get MAIL_FROM_NAME 2>/dev/null || true)"
+        if ! validate_mail_from_name "$mail_from_name"; then
+            error "MAIL_FROM_NAME отсутствует или не является безопасным нейтральным именем."
+            failed=1
+        fi
     fi
     if grep -q '^PUBLIC_SITE_URL=' "$release/.env.example"; then
         public_site_url="$(env_get PUBLIC_SITE_URL 2>/dev/null || true)"
@@ -185,6 +246,7 @@ SMTP_MAX_CONCURRENCY=5
 SMTP_USER=$SMTP_USER_INPUT
 SMTP_PASSWORD=$SMTP_PASSWORD_INPUT
 FROM_EMAIL=$FROM_EMAIL_INPUT
+MAIL_FROM_NAME=$MAIL_FROM_NAME_INPUT
 
 SECRET_KEY=$SECRET_KEY_INPUT
 ACCESS_TOKEN_EXPIRE_DAYS=7
@@ -359,6 +421,9 @@ collect_installation_settings() {
     validate_ascii_printable "$SMTP_PASSWORD_INPUT" || \
         die "Пароль SMTP должен состоять из печатных ASCII-символов."
     prompt_validated_email "Email отправителя" FROM_EMAIL_INPUT
+    prompt_mail_from_name \
+        "Нейтральное имя отправителя писем" \
+        "$DEFAULT_MAIL_FROM_NAME" MAIL_FROM_NAME_INPUT
 
     printf '\nНастройка Remnawave\n'
     prompt "URL API Remnawave (например https://panel.example.com/api)" REMNAWAVE_API_URL_INPUT
@@ -416,11 +481,15 @@ backup_environment() {
 }
 
 show_environment_summary() {
+    local mail_from_name
     require_installed
+    mail_from_name="$(env_get MAIL_FROM_NAME 2>/dev/null || true)"
+    [[ -n "$mail_from_name" ]] || mail_from_name="$DEFAULT_MAIL_FROM_NAME"
     printf 'Название backend: %s\n' "$(env_get SITE_NAME)"
     printf 'Публичный URL сайта: %s\n' \
         "$(env_get PUBLIC_SITE_URL 2>/dev/null || printf 'не задан')"
     printf 'Хост SMTP: %s:%s\n' "$(env_get SMTP_HOST)" "$(env_get SMTP_PORT)"
+    printf 'Имя отправителя писем: %s\n' "$mail_from_name"
     printf 'Параллельные SMTP-отправки: %s\n' \
         "$(env_get SMTP_MAX_CONCURRENCY 2>/dev/null || printf 5)"
     printf 'URL Remnawave: %s\n' "$(env_get REMNAWAVE_API_URL)"

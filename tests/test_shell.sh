@@ -7,6 +7,8 @@ DEFAULT_MANAGER_REF=main
 
 # shellcheck source=../lib/common.sh
 source "$ROOT/lib/common.sh"
+# shellcheck source=../lib/config.sh
+source "$ROOT/lib/config.sh"
 
 assert_valid() {
     local function_name="$1" value="$2"
@@ -59,6 +61,14 @@ assert_invalid validate_ascii_graphic 'пароль'
 assert_valid validate_ascii_printable 'smtp password !'
 assert_invalid validate_ascii_printable 'пароль'
 
+assert_valid validate_mail_from_name 'Батя'
+assert_valid validate_mail_from_name 'Служба уведомлений'
+assert_invalid validate_mail_from_name ''
+assert_invalid validate_mail_from_name 'Батя VPN'
+assert_invalid validate_mail_from_name 'vpn-service'
+assert_invalid validate_mail_from_name ' Имя'
+assert_invalid validate_mail_from_name $'Имя\tсервиса'
+
 # The prompt helpers must not shadow a caller's commonly named output variable.
 ! grep -Eq 'local .* variable_name=.* value([[:space:]]|$)' "$ROOT/lib/common.sh"
 grep -Fq '(( ${#SMTP_PASSWORD_INPUT} >= 10 ))' "$ROOT/lib/config.sh"
@@ -71,6 +81,9 @@ grep -Fq "printf '%s [y/n]: '" "$ROOT/lib/common.sh"
 ! grep -Fq 'configure_public_settings' "$ROOT/lib/operations.sh"
 ! grep -Fq 'API_BASE_URL' "$ROOT/lib/deploy.sh"
 grep -Fq 'SITE_NAME=$site_name' "$ROOT/lib/config.sh"
+grep -Fq 'MAIL_FROM_NAME=$MAIL_FROM_NAME_INPUT' "$ROOT/lib/config.sh"
+grep -Fq 'prompt_mail_from_name' "$ROOT/lib/config.sh"
+grep -Fq 'configure_mail_from_name' "$ROOT/lib/operations.sh"
 grep -Fq 'PUBLIC_SITE_URL=$PUBLIC_SITE_URL_INPUT' "$ROOT/lib/config.sh"
 grep -Fq 'PUBLIC_SITE_URL_INPUT="https://$DOMAIN"' "$ROOT/lib/config.sh"
 grep -Fq 'prompt_public_site_url' "$ROOT/lib/config.sh"
@@ -143,7 +156,7 @@ fi
     sandbox="$(mktemp -d)"
     trap 'rm -rf -- "$sandbox"' EXIT
     mkdir -p "$sandbox/release"
-    printf 'SITE_NAME=Батя VPN\nPUBLIC_SITE_URL=https://YOUR.PUBLIC.HOSTNAME\n' \
+    printf 'SITE_NAME=Батя VPN\nMAIL_FROM_NAME=Батя\nPUBLIC_SITE_URL=https://YOUR.PUBLIC.HOSTNAME\n' \
         >"$sandbox/release/.env.example"
     declare -A values=(
         [SITE_NAME]='Legacy backend name'
@@ -167,6 +180,7 @@ fi
     [[ ! -v 'values[BRAND_NAME]' ]]
     [[ ! -v 'values[PUBLIC_NEUTRAL_SITE_TITLE]' ]]
     [[ "${values[SITE_NAME]}" == 'Батя VPN' ]]
+    [[ "${values[MAIL_FROM_NAME]}" == 'Батя' ]]
     [[ "${values[SUBSCRIPTION_NOTIFICATION_BATCH_SIZE]}" == 100 ]]
     [[ "${values[SUBSCRIPTION_NOTIFICATION_CONCURRENCY]}" == 5 ]]
     [[ "${values[SUBSCRIPTION_NOTIFICATION_RETRY_MINUTES]}" == 5 ]]
@@ -183,10 +197,11 @@ fi
     sandbox="$(mktemp -d)"
     trap 'rm -rf -- "$sandbox"' EXIT
     mkdir -p "$sandbox/release"
-    printf 'SITE_NAME=Батя VPN\nPUBLIC_SITE_URL=https://YOUR.PUBLIC.HOSTNAME\n' \
+    printf 'SITE_NAME=Батя VPN\nMAIL_FROM_NAME=Батя\nPUBLIC_SITE_URL=https://YOUR.PUBLIC.HOSTNAME\n' \
         >"$sandbox/release/.env.example"
     declare -A values=(
         [SITE_NAME]='Батя VPN'
+        [MAIL_FROM_NAME]='Служба уведомлений'
         [PUBLIC_SITE_URL]=https://unexpected.example.com
         [YOOKASSA_RETURN_URL]=https://vpn.example.com/payment-return
     )
@@ -200,6 +215,7 @@ fi
     info() { :; }
 
     migrate_environment_for_release "$sandbox/release"
+    [[ "${values[MAIL_FROM_NAME]}" == 'Служба уведомлений' ]]
     [[ "${values[PUBLIC_SITE_URL]}" == https://unexpected.example.com ]]
     ! validate_environment_schema_for_release "$sandbox/release" \
         >/dev/null 2>&1
@@ -239,6 +255,30 @@ fi
     configure_public_site_url
     [[ "$set_key" == PUBLIC_SITE_URL ]]
     [[ "$set_value" == https://vpn.example.com ]]
+    [[ "$applied_backup" == /tmp/env-backup ]]
+)
+
+(
+    # The neutral sender name has a dedicated editor that preserves the
+    # transactional env backup/apply flow without requesting SMTP secrets.
+    # shellcheck source=../lib/operations.sh
+    source "$ROOT/lib/operations.sh"
+    set_key=unset
+    set_value=unset
+    applied_backup=unset
+    require_installed() { :; }
+    env_get() {
+        [[ "$1" == MAIL_FROM_NAME ]] || return 1
+        printf '%s\n' 'Батя'
+    }
+    prompt_mail_from_name() { printf -v "$3" '%s' 'Служба уведомлений'; }
+    backup_environment() { printf '%s\n' /tmp/env-backup; }
+    env_set() { set_key="$1"; set_value="$2"; }
+    apply_environment_change() { applied_backup="$1"; }
+
+    configure_mail_from_name
+    [[ "$set_key" == MAIL_FROM_NAME ]]
+    [[ "$set_value" == 'Служба уведомлений' ]]
     [[ "$applied_backup" == /tmp/env-backup ]]
 )
 
