@@ -887,6 +887,18 @@ configure_mail_from_name() {
     apply_environment_change "$backup"
 }
 
+configure_smtp_helo_name() {
+    local backup current value
+    require_installed
+    current="$(env_get SMTP_HELO_NAME 2>/dev/null || true)"
+    [[ -n "$current" ]] || current="$DOMAIN"
+    prompt_smtp_helo_name "Имя SMTP HELO/EHLO" "$current" value
+    backup="$(backup_environment)"
+    ACTIVE_ENV_BACKUP="$backup"
+    env_set SMTP_HELO_NAME "$value"
+    apply_environment_change "$backup"
+}
+
 configure_remnawave() {
     local backup url token cookies
     require_installed
@@ -1049,27 +1061,29 @@ environment_menu() {
         clear
         printf 'Менеджер VPN Site - настройки окружения\n\n'
         printf '1. SMTP\n'
-        printf '2. Имя отправителя писем\n'
-        printf '3. Remnawave\n'
-        printf '4. YooKassa\n'
-        printf '5. Ограничения запросов и рабочие лимиты\n'
-        printf '6. Публичный URL сайта для ссылок в письмах\n'
-        printf '7. Завершить выдачу прав первого администратора\n'
-        printf '8. Безопасная сводка конфигурации\n'
-        printf '9. Редактировать полный env-файл\n'
+        printf '2. Имя SMTP HELO/EHLO\n'
+        printf '3. Имя отправителя писем\n'
+        printf '4. Remnawave\n'
+        printf '5. YooKassa\n'
+        printf '6. Ограничения запросов и рабочие лимиты\n'
+        printf '7. Публичный URL сайта для ссылок в письмах\n'
+        printf '8. Завершить выдачу прав первого администратора\n'
+        printf '9. Безопасная сводка конфигурации\n'
+        printf '10. Редактировать полный env-файл\n'
         printf '0. Назад\n\n'
         printf 'Выберите пункт: ' >/dev/tty
         IFS= read -r choice </dev/tty
         case "$choice" in
             1) configure_smtp; pause ;;
-            2) configure_mail_from_name; pause ;;
-            3) configure_remnawave; pause ;;
-            4) configure_yookassa; pause ;;
-            5) configure_limits; pause ;;
-            6) configure_public_site_url; pause ;;
-            7) finish_admin_bootstrap; pause ;;
-            8) show_environment_summary; pause ;;
-            9) edit_environment_file; pause ;;
+            2) configure_smtp_helo_name; pause ;;
+            3) configure_mail_from_name; pause ;;
+            4) configure_remnawave; pause ;;
+            5) configure_yookassa; pause ;;
+            6) configure_limits; pause ;;
+            7) configure_public_site_url; pause ;;
+            8) finish_admin_bootstrap; pause ;;
+            9) show_environment_summary; pause ;;
+            10) edit_environment_file; pause ;;
             0) return 0 ;;
             *) warn "Неизвестный пункт меню."; pause ;;
         esac

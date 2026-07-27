@@ -81,6 +81,26 @@ release_mail_from_name() {
     release_environment_value "$1" MAIL_FROM_NAME
 }
 
+validate_smtp_helo_name() {
+    local value="$1" lower
+    validate_ascii_graphic "$value" && validate_domain "$value" || return 1
+    lower="${value,,}"
+    [[ "$lower" != "your.public.hostname" ]]
+}
+
+prompt_smtp_helo_name() {
+    local message="$1" default_value="$2" variable_name="$3" input_value
+    while true; do
+        prompt_default "$message" "$default_value" input_value
+        if validate_smtp_helo_name "$input_value"; then
+            input_value="${input_value,,}"
+            printf -v "$variable_name" '%s' "$input_value"
+            return 0
+        fi
+        warn "Введите полное DNS-имя, например $DOMAIN, без протокола, порта или IP-адреса."
+    done
+}
+
 validate_mail_from_name() {
     local value="$1" lower
     local LC_ALL=C.utf8
@@ -105,7 +125,7 @@ prompt_mail_from_name() {
 
 migrate_environment_for_release() {
     local release="$1" key public_site_url return_url site_name current_site_name
-    local mail_from_name current_mail_from_name
+    local mail_from_name current_mail_from_name smtp_helo_name
     ENVIRONMENT_MIGRATED=0
     [[ -f "$release/.env.example" ]] || \
         die "В release отсутствует .env.example; безопасная миграция окружения невозможна."
@@ -147,6 +167,16 @@ migrate_environment_for_release() {
         fi
     fi
 
+    if grep -q '^SMTP_HELO_NAME=' "$release/.env.example"; then
+        smtp_helo_name="$(env_get SMTP_HELO_NAME 2>/dev/null || true)"
+        if [[ -z "$smtp_helo_name" ]]; then
+            validate_smtp_helo_name "$DOMAIN" || \
+                die "Публичный домен не подходит для SMTP HELO/EHLO: $DOMAIN"
+            env_set SMTP_HELO_NAME "$DOMAIN"
+            ENVIRONMENT_MIGRATED=1
+        fi
+    fi
+
     if grep -q '^PUBLIC_SITE_URL=' "$release/.env.example"; then
         public_site_url="$(env_get PUBLIC_SITE_URL 2>/dev/null || true)"
         if [[ -z "$public_site_url" ]]; then
@@ -168,7 +198,7 @@ migrate_environment_for_release() {
 
 validate_environment_schema_for_release() {
     local release="$1" key failed=0 public_site_url return_url site_name
-    local mail_from_name
+    local mail_from_name smtp_helo_name
     grep -q '^PUBLIC_COPY_MODE=' "$release/.env.example" && return 0
     for key in "${LEGACY_APPEARANCE_ENV_KEYS[@]}"; do
         if env_get "$key" >/dev/null 2>&1; then
@@ -193,6 +223,13 @@ validate_environment_schema_for_release() {
         mail_from_name="$(env_get MAIL_FROM_NAME 2>/dev/null || true)"
         if ! validate_mail_from_name "$mail_from_name"; then
             error "MAIL_FROM_NAME отсутствует или не является безопасным нейтральным именем."
+            failed=1
+        fi
+    fi
+    if grep -q '^SMTP_HELO_NAME=' "$release/.env.example"; then
+        smtp_helo_name="$(env_get SMTP_HELO_NAME 2>/dev/null || true)"
+        if ! validate_smtp_helo_name "$smtp_helo_name"; then
+            error "SMTP_HELO_NAME отсутствует или не является полным безопасным DNS-именем."
             failed=1
         fi
     fi
@@ -240,6 +277,7 @@ WEBHOOK_RATE_LIMIT_REQUESTS=30
 ENABLE_API_DOCS=false
 
 SMTP_HOST=$SMTP_HOST_INPUT
+SMTP_HELO_NAME=$SMTP_HELO_NAME_INPUT
 SMTP_PORT=$SMTP_PORT_INPUT
 SMTP_TIMEOUT_SECONDS=15
 SMTP_MAX_CONCURRENCY=5
@@ -410,6 +448,8 @@ collect_installation_settings() {
 
     printf '\nНастройка SMTP (требуется для отправки кодов входа)\n'
     prompt "Хост SMTP" SMTP_HOST_INPUT
+    prompt_smtp_helo_name \
+        "Имя SMTP HELO/EHLO" "$DOMAIN" SMTP_HELO_NAME_INPUT
     prompt_default "TLS-порт SMTP" "465" SMTP_PORT_INPUT
     validate_integer_range "$SMTP_PORT_INPUT" 1 65535 || die "Некорректный порт SMTP."
     prompt "Имя пользователя SMTP" SMTP_USER_INPUT
@@ -481,14 +521,17 @@ backup_environment() {
 }
 
 show_environment_summary() {
-    local mail_from_name
+    local mail_from_name smtp_helo_name
     require_installed
     mail_from_name="$(env_get MAIL_FROM_NAME 2>/dev/null || true)"
     [[ -n "$mail_from_name" ]] || mail_from_name="$DEFAULT_MAIL_FROM_NAME"
+    smtp_helo_name="$(env_get SMTP_HELO_NAME 2>/dev/null || true)"
+    [[ -n "$smtp_helo_name" ]] || smtp_helo_name="$DOMAIN"
     printf 'Название backend: %s\n' "$(env_get SITE_NAME)"
     printf 'Публичный URL сайта: %s\n' \
         "$(env_get PUBLIC_SITE_URL 2>/dev/null || printf 'не задан')"
     printf 'Хост SMTP: %s:%s\n' "$(env_get SMTP_HOST)" "$(env_get SMTP_PORT)"
+    printf 'Имя SMTP HELO/EHLO: %s\n' "$smtp_helo_name"
     printf 'Имя отправителя писем: %s\n' "$mail_from_name"
     printf 'Параллельные SMTP-отправки: %s\n' \
         "$(env_get SMTP_MAX_CONCURRENCY 2>/dev/null || printf 5)"

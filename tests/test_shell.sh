@@ -69,6 +69,38 @@ assert_invalid validate_mail_from_name 'vpn-service'
 assert_invalid validate_mail_from_name ' Имя'
 assert_invalid validate_mail_from_name $'Имя\tсервиса'
 
+assert_valid validate_smtp_helo_name mail.example.com
+assert_valid validate_smtp_helo_name MAIL.EXAMPLE.COM
+assert_invalid validate_smtp_helo_name localhost
+assert_invalid validate_smtp_helo_name 192.0.2.10
+assert_invalid validate_smtp_helo_name 'https://mail.example.com'
+assert_invalid validate_smtp_helo_name 'mail_server.example.com'
+assert_invalid validate_smtp_helo_name 'YOUR.PUBLIC.HOSTNAME'
+assert_invalid validate_smtp_helo_name 'mail.Kom'
+assert_invalid validate_smtp_helo_name $'mail.example.com\nRCPT TO:<victim@example.com>'
+
+(
+    # Validate the raw prompt input before lowercasing so Unicode case mapping
+    # can never turn a rejected hostname into an accepted ASCII hostname.
+    source "$ROOT/lib/config.sh"
+    DOMAIN=vpn.example.com
+    attempts=0
+    prompt_default() {
+        attempts=$((attempts + 1))
+        if (( attempts == 1 )); then
+            printf -v "$3" '%s' 'mail.Kom'
+        else
+            printf -v "$3" '%s' 'MAIL.EXAMPLE.COM'
+        fi
+    }
+    warn() { :; }
+    smtp_helo_name=""
+
+    prompt_smtp_helo_name "SMTP HELO/EHLO" "$DOMAIN" smtp_helo_name
+    (( attempts == 2 ))
+    [[ "$smtp_helo_name" == mail.example.com ]]
+)
+
 # The prompt helpers must not shadow a caller's commonly named output variable.
 ! grep -Eq 'local .* variable_name=.* value([[:space:]]|$)' "$ROOT/lib/common.sh"
 grep -Fq '(( ${#SMTP_PASSWORD_INPUT} >= 10 ))' "$ROOT/lib/config.sh"
@@ -82,6 +114,9 @@ grep -Fq "printf '%s [y/n]: '" "$ROOT/lib/common.sh"
 ! grep -Fq 'API_BASE_URL' "$ROOT/lib/deploy.sh"
 grep -Fq 'SITE_NAME=$site_name' "$ROOT/lib/config.sh"
 grep -Fq 'MAIL_FROM_NAME=$MAIL_FROM_NAME_INPUT' "$ROOT/lib/config.sh"
+grep -Fq 'SMTP_HELO_NAME=$SMTP_HELO_NAME_INPUT' "$ROOT/lib/config.sh"
+grep -Fq 'prompt_smtp_helo_name' "$ROOT/lib/config.sh"
+grep -Fq 'configure_smtp_helo_name' "$ROOT/lib/operations.sh"
 grep -Fq 'prompt_mail_from_name' "$ROOT/lib/config.sh"
 grep -Fq 'configure_mail_from_name' "$ROOT/lib/operations.sh"
 grep -Fq 'PUBLIC_SITE_URL=$PUBLIC_SITE_URL_INPUT' "$ROOT/lib/config.sh"
@@ -156,7 +191,7 @@ fi
     sandbox="$(mktemp -d)"
     trap 'rm -rf -- "$sandbox"' EXIT
     mkdir -p "$sandbox/release"
-    printf 'SITE_NAME=Батя VPN\nMAIL_FROM_NAME=Батя\nPUBLIC_SITE_URL=https://YOUR.PUBLIC.HOSTNAME\n' \
+    printf 'SITE_NAME=Батя VPN\nMAIL_FROM_NAME=Батя\nSMTP_HELO_NAME=YOUR.PUBLIC.HOSTNAME\nPUBLIC_SITE_URL=https://YOUR.PUBLIC.HOSTNAME\n' \
         >"$sandbox/release/.env.example"
     declare -A values=(
         [SITE_NAME]='Legacy backend name'
@@ -181,6 +216,7 @@ fi
     [[ ! -v 'values[PUBLIC_NEUTRAL_SITE_TITLE]' ]]
     [[ "${values[SITE_NAME]}" == 'Батя VPN' ]]
     [[ "${values[MAIL_FROM_NAME]}" == 'Батя' ]]
+    [[ "${values[SMTP_HELO_NAME]}" == vpn.example.com ]]
     [[ "${values[SUBSCRIPTION_NOTIFICATION_BATCH_SIZE]}" == 100 ]]
     [[ "${values[SUBSCRIPTION_NOTIFICATION_CONCURRENCY]}" == 5 ]]
     [[ "${values[SUBSCRIPTION_NOTIFICATION_RETRY_MINUTES]}" == 5 ]]
@@ -188,6 +224,11 @@ fi
     [[ "${values[PUBLIC_SITE_URL]}" == https://vpn.example.com ]]
     [[ "${values[YOOKASSA_RETURN_URL]}" == \
         https://vpn.example.com/payment-return ]]
+
+    values[SMTP_HELO_NAME]=''
+    migrate_environment_for_release "$sandbox/release"
+    (( ENVIRONMENT_MIGRATED == 1 ))
+    [[ "${values[SMTP_HELO_NAME]}" == vpn.example.com ]]
 )
 
 (
@@ -197,11 +238,12 @@ fi
     sandbox="$(mktemp -d)"
     trap 'rm -rf -- "$sandbox"' EXIT
     mkdir -p "$sandbox/release"
-    printf 'SITE_NAME=Батя VPN\nMAIL_FROM_NAME=Батя\nPUBLIC_SITE_URL=https://YOUR.PUBLIC.HOSTNAME\n' \
+    printf 'SITE_NAME=Батя VPN\nMAIL_FROM_NAME=Батя\nSMTP_HELO_NAME=YOUR.PUBLIC.HOSTNAME\nPUBLIC_SITE_URL=https://YOUR.PUBLIC.HOSTNAME\n' \
         >"$sandbox/release/.env.example"
     declare -A values=(
         [SITE_NAME]='Батя VPN'
         [MAIL_FROM_NAME]='Служба уведомлений'
+        [SMTP_HELO_NAME]=outbound.example.com
         [PUBLIC_SITE_URL]=https://unexpected.example.com
         [YOOKASSA_RETURN_URL]=https://vpn.example.com/payment-return
     )
@@ -216,9 +258,44 @@ fi
 
     migrate_environment_for_release "$sandbox/release"
     [[ "${values[MAIL_FROM_NAME]}" == 'Служба уведомлений' ]]
+    [[ "${values[SMTP_HELO_NAME]}" == outbound.example.com ]]
     [[ "${values[PUBLIC_SITE_URL]}" == https://unexpected.example.com ]]
     ! validate_environment_schema_for_release "$sandbox/release" \
         >/dev/null 2>&1
+)
+
+(
+    # SMTP_HELO_NAME is required only by releases that declare it. A valid
+    # custom FQDN is accepted; URL/IP/placeholder values are rejected.
+    # shellcheck source=../lib/config.sh
+    source "$ROOT/lib/config.sh"
+    sandbox="$(mktemp -d)"
+    trap 'rm -rf -- "$sandbox"' EXIT
+    mkdir -p "$sandbox/release"
+    printf 'SITE_NAME=Батя VPN\n' >"$sandbox/release/.env.example"
+    declare -A values=(
+        [SITE_NAME]='Батя VPN'
+        [SUBSCRIPTION_NOTIFICATION_BATCH_SIZE]=100
+        [SUBSCRIPTION_NOTIFICATION_CONCURRENCY]=5
+        [SUBSCRIPTION_NOTIFICATION_RETRY_MINUTES]=5
+        [SMTP_MAX_CONCURRENCY]=5
+        [YOOKASSA_RETURN_URL]=https://vpn.example.com/payment-return
+    )
+    DOMAIN=vpn.example.com
+    env_get() {
+        [[ -v "values[$1]" ]] || return 1
+        printf '%s\n' "${values[$1]}"
+    }
+    error() { :; }
+
+    validate_environment_schema_for_release "$sandbox/release"
+    printf 'SMTP_HELO_NAME=YOUR.PUBLIC.HOSTNAME\n' \
+        >>"$sandbox/release/.env.example"
+    ! validate_environment_schema_for_release "$sandbox/release"
+    values[SMTP_HELO_NAME]=outbound.example.com
+    validate_environment_schema_for_release "$sandbox/release"
+    values[SMTP_HELO_NAME]=192.0.2.10
+    ! validate_environment_schema_for_release "$sandbox/release"
 )
 
 (
@@ -255,6 +332,31 @@ fi
     configure_public_site_url
     [[ "$set_key" == PUBLIC_SITE_URL ]]
     [[ "$set_value" == https://vpn.example.com ]]
+    [[ "$applied_backup" == /tmp/env-backup ]]
+)
+
+(
+    # HELO has a dedicated transactional editor, so changing it never requires
+    # re-entering or exposing the SMTP password.
+    # shellcheck source=../lib/operations.sh
+    source "$ROOT/lib/operations.sh"
+    DOMAIN=vpn.example.com
+    set_key=unset
+    set_value=unset
+    applied_backup=unset
+    require_installed() { :; }
+    env_get() {
+        [[ "$1" == SMTP_HELO_NAME ]] || return 1
+        printf '%s\n' vpn.example.com
+    }
+    prompt_smtp_helo_name() { printf -v "$3" '%s' outbound.example.com; }
+    backup_environment() { printf '%s\n' /tmp/env-backup; }
+    env_set() { set_key="$1"; set_value="$2"; }
+    apply_environment_change() { applied_backup="$1"; }
+
+    configure_smtp_helo_name
+    [[ "$set_key" == SMTP_HELO_NAME ]]
+    [[ "$set_value" == outbound.example.com ]]
     [[ "$applied_backup" == /tmp/env-backup ]]
 )
 

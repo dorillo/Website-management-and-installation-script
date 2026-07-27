@@ -107,6 +107,7 @@ class CrossRepositoryContractTests(unittest.TestCase):
             "SECRET_KEY",
             "SITE_NAME",
             "SMTP_HOST",
+            "SMTP_HELO_NAME",
             "SMTP_PASSWORD",
             "SMTP_PORT",
             "SMTP_USER",
