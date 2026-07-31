@@ -82,6 +82,14 @@ class ManagerContractTests(unittest.TestCase):
         self.assertIn("ProtectProc=invisible", service)
         self.assertIn("ProcSubset=pid", service)
 
+    def test_current_referral_migration_has_manager_guards(self) -> None:
+        operations = (ROOT / "lib" / "operations.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("preflight_referral_ledger_migration", operations)
+        self.assertIn("verify_referral_ledger_migration", operations)
+        self.assertIn("20260729_0012", operations)
+
 
 @unittest.skipUnless(SITE_ROOT.is_dir(), "adjacent vpn-site checkout is absent")
 class CrossRepositoryContractTests(unittest.TestCase):

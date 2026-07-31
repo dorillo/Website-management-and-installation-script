@@ -464,7 +464,62 @@ update_stop_line="$(awk -v start="$update_flag_line" \
 update_backup_line="$(awk -v start="$update_stop_line" \
     'NR > start && /if ! create_backup/ {print NR; exit}' \
     "$ROOT/lib/operations.sh")"
-(( update_stop_line < update_backup_line ))
+legacy_preflight_line="$(awk -v start="$update_stop_line" \
+    'NR > start && /preflight_legacy_payment_migration/ {print NR; exit}' \
+    "$ROOT/lib/operations.sh")"
+referral_preflight_line="$(awk -v start="$update_stop_line" \
+    'NR > start && /preflight_referral_ledger_migration/ {print NR; exit}' \
+    "$ROOT/lib/operations.sh")"
+(( update_stop_line < legacy_preflight_line && \
+    legacy_preflight_line < referral_preflight_line && \
+    referral_preflight_line < update_backup_line ))
+grep -Fq 'verify_referral_ledger_migration' "$ROOT/lib/operations.sh"
+grep -Fq 'amount_value !~' "$ROOT/lib/operations.sh"
+
+(
+    # shellcheck source=../lib/operations.sh
+    source "$ROOT/lib/operations.sh"
+    sandbox="$(mktemp -d)"
+    trap 'rm -rf -- "$sandbox"' EXIT
+    mkdir -p "$sandbox/release/backend/database/alembic/versions"
+    printf 'revision: str = "20260729_0012"\n' \
+        >"$sandbox/release/backend/database/alembic/versions/0012.py"
+    runuser() {
+        case "$*" in
+            *'SELECT version_num'*) printf '%s\n' 20260727_0011 ;;
+            *'amount_value !~'*) printf '%s\n' 0 ;;
+            *'referral_program_settings'*) printf '%s\n' '1|0|0|0|0' ;;
+            *) return 1 ;;
+        esac
+    }
+
+    preflight_referral_ledger_migration "$sandbox/release"
+    (( UPDATE_REFERRAL_LEDGER_PENDING == 1 ))
+    verify_referral_ledger_migration
+)
+
+if (
+    # shellcheck source=../lib/operations.sh
+    source "$ROOT/lib/operations.sh"
+    sandbox="$(mktemp -d)"
+    trap 'rm -rf -- "$sandbox"' EXIT
+    mkdir -p "$sandbox/release/backend/database/alembic/versions"
+    printf 'revision: str = "20260729_0012"\n' \
+        >"$sandbox/release/backend/database/alembic/versions/0012.py"
+    runuser() {
+        case "$*" in
+            *'SELECT version_num'*) printf '%s\n' 20260727_0011 ;;
+            *'amount_value !~'*) printf '%s\n' 2 ;;
+            *) return 1 ;;
+        esac
+    }
+    error() { :; }
+
+    preflight_referral_ledger_migration "$sandbox/release"
+); then
+    printf 'Malformed referral-ledger amounts were accepted.\n' >&2
+    exit 1
+fi
 
 install_prepare_line="$(grep -n '^[[:space:]]*prepare_site_release "\$sha"' \
     "$ROOT/lib/deploy.sh" | tail -1 | cut -d: -f1)"

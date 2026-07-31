@@ -486,6 +486,7 @@ clear_update_state() {
     UPDATE_ENV_BACKUP=""
     UPDATE_RUNTIME_BACKUP=""
     UPDATE_DATABASE_DIRTY=0
+    UPDATE_REFERRAL_LEDGER_PENDING=0
     UPDATE_BACKUP_TIMER_WAS_ENABLED=0
     UPDATE_DEFAULT_NGINX_STATE=""
 }
@@ -576,6 +577,74 @@ preflight_legacy_payment_migration() {
     esac
 }
 
+preflight_referral_ledger_migration() {
+    local release="$1" revision malformed_count=0
+    UPDATE_REFERRAL_LEDGER_PENDING=0
+    grep -Rqs 'revision.*20260729_0012' \
+        "$release/backend/database/alembic/versions" || return 0
+
+    revision="$(runuser -u postgres -- psql --dbname=vpn_site \
+        --tuples-only --no-align --set=ON_ERROR_STOP=1 \
+        --command 'SELECT version_num FROM alembic_version LIMIT 1')"
+    case "$revision" in
+        20260713_0001|20260713_0002|20260718_0003|20260719_0004|\
+        20260720_0005|20260720_0006|20260720_0007|20260720_0008|\
+        20260726_0009|20260726_0010|20260727_0011)
+            UPDATE_REFERRAL_LEDGER_PENDING=1
+            ;;
+        *) return 0 ;;
+    esac
+
+    malformed_count="$(runuser -u postgres -- psql --dbname=vpn_site \
+        --tuples-only --no-align --set=ON_ERROR_STOP=1 \
+        --command "SELECT count(*) FROM user_payments WHERE amount_value !~ '^[0-9]{1,16}\\.[0-9]{2}$'")"
+    (( malformed_count == 0 )) || die \
+        "Обновление остановлено до изменения БД: migration 0012 не принимает нестандартный формат amount_value у $malformed_count платежей. Сверьте эти записи с YooKassa и предыдущей версией сайта; автоматически переписывать финансовую историю запрещено."
+}
+
+verify_referral_ledger_migration() {
+    local verification
+    (( UPDATE_REFERRAL_LEDGER_PENDING == 1 )) || return 0
+
+    verification="$(runuser -u postgres -- psql --dbname=vpn_site \
+        --tuples-only --no-align --field-separator='|' --set=ON_ERROR_STOP=1 \
+        --command "
+SELECT
+    (SELECT count(*) FROM referral_program_settings
+     WHERE singleton_id = 1 AND enabled IS FALSE
+       AND reward_rate_bps = 1000
+       AND minimum_cash_payment_kopecks = 100),
+    (SELECT count(*) FROM bonus_accounts a
+     LEFT JOIN users u ON u.id = a.user_id
+     WHERE (a.user_id IS NOT NULL AND (u.id IS NULL OR a.closed_at IS NOT NULL))
+        OR (a.user_id IS NULL AND (a.closed_at IS NULL
+            OR a.available_kopecks <> 0 OR a.reserved_kopecks <> 0))),
+    (SELECT count(*) FROM users u
+     LEFT JOIN bonus_accounts a ON a.user_id = u.id
+     WHERE a.id IS NULL),
+    (SELECT count(*)
+     FROM (SELECT DISTINCT p.original_user_id
+           FROM user_payments p
+           LEFT JOIN users u ON u.id = p.original_user_id
+           WHERE u.id IS NULL) historical
+     LEFT JOIN bonus_accounts a
+       ON a.original_user_id = historical.original_user_id
+     WHERE a.id IS NULL OR a.user_id IS NOT NULL OR a.closed_at IS NULL),
+    (SELECT count(*) FROM user_payments
+     WHERE gross_amount_kopecks <> cash_amount_kopecks
+        OR bonus_discount_kopecks <> 0
+        OR amount_value <> to_char(
+            cash_amount_kopecks / 100.0,
+            'FM9999999999999990.00'));")" || {
+        error "Не удалось проверить результат migration 0012."
+        return 1
+    }
+    if [[ "$verification" != "1|0|0|0|0" ]]; then
+        error "Migration 0012 создала несогласованное начальное состояние referral ledger (проверка: $verification)."
+        return 1
+    fi
+}
+
 rollback_update_from_trap() {
     local failed=0
     (( UPDATE_IN_PROGRESS == 1 )) || return 0
@@ -662,7 +731,6 @@ update_site() {
     new_release="$PREPARED_SITE_RELEASE"
     validate_release_public_domain "$new_release" "$DOMAIN" || \
         die "Обычное обновление не активирует release с SEO-метаданными другого домена."
-    preflight_legacy_payment_migration "$new_release"
     require_manager_owned_database
     UPDATE_OLD_RELEASE="$(readlink -f "$CURRENT_LINK")"
     UPDATE_OLD_SHA="$CURRENT_SHA"
@@ -677,6 +745,8 @@ update_site() {
     fi
     UPDATE_IN_PROGRESS=1
     systemctl stop "$SERVICE_NAME"
+    preflight_legacy_payment_migration "$new_release"
+    preflight_referral_ledger_migration "$new_release"
     if ! create_backup >/dev/null; then
         rollback_update_and_die "Не удалось создать резервную копию остановленного сайта."
     fi
@@ -697,6 +767,9 @@ update_site() {
     if ! "$(envexec_path)" "$ENV_FILE" "$new_release/.venv/bin/python" \
         -m alembic -c "$new_release/alembic.ini" check; then
         rollback_update_and_die "Схема БД расходится с моделями новой версии."
+    fi
+    if ! verify_referral_ledger_migration; then
+        rollback_update_and_die "Начальное состояние referral ledger после migration 0012 не прошло проверку."
     fi
     if ! activate_tls_nginx "$DOMAIN" local-validation "$new_release"; then
         rollback_update_and_die "Не удалось закрыть Nginx для локальной проверки."
