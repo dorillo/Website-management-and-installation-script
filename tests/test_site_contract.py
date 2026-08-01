@@ -90,6 +90,36 @@ class ManagerContractTests(unittest.TestCase):
         self.assertIn("verify_referral_ledger_migration", operations)
         self.assertIn("20260729_0012", operations)
 
+    def test_remnawave_v3_probe_is_part_of_managed_workflows(self) -> None:
+        config = (ROOT / "lib" / "config.sh").read_text(encoding="utf-8")
+        deploy = (ROOT / "lib" / "deploy.sh").read_text(encoding="utf-8")
+        operations = (ROOT / "lib" / "operations.sh").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("validate_remnawave_v3_access()", config)
+        self.assertIn('"users/stream"', config)
+        self.assertIn("remnawave_probe.py", config)
+        self.assertTrue((ROOT / "bin" / "remnawave_probe.py").is_file())
+        self.assertIn('validate_remnawave_v3_access "$release"', deploy)
+        self.assertGreaterEqual(
+            operations.count("validate_remnawave_v3_access"),
+            2,
+        )
+
+        update_probe = operations.index(
+            'validate_remnawave_v3_access "$new_release"'
+        )
+        update_stop = operations.index('systemctl stop "$SERVICE_NAME"', update_probe)
+        self.assertLess(update_probe, update_stop)
+
+    def test_nginx_allows_remnawave_v3_guarded_mutations(self) -> None:
+        nginx = (ROOT / "templates" / "nginx.conf").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("proxy_read_timeout 240s;", nginx)
+        self.assertIn("proxy_send_timeout 240s;", nginx)
+
 
 @unittest.skipUnless(SITE_ROOT.is_dir(), "adjacent vpn-site checkout is absent")
 class CrossRepositoryContractTests(unittest.TestCase):

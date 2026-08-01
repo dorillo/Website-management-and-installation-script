@@ -731,6 +731,8 @@ update_site() {
     new_release="$PREPARED_SITE_RELEASE"
     validate_release_public_domain "$new_release" "$DOMAIN" || \
         die "Обычное обновление не активирует release с SEO-метаданными другого домена."
+    validate_remnawave_v3_access "$new_release" || \
+        die "Обновите токен Remnawave через настройки окружения до остановки старой версии сайта."
     require_manager_owned_database
     UPDATE_OLD_RELEASE="$(readlink -f "$CURRENT_LINK")"
     UPDATE_OLD_SHA="$CURRENT_SHA"
@@ -880,6 +882,7 @@ run_diagnostics() {
     "$(envctl_path)" validate "$ENV_FILE" || failed=1
     validate_application_environment || failed=1
     validate_environment_schema_for_release "$CURRENT_LINK" || failed=1
+    validate_remnawave_v3_access "$CURRENT_LINK" || failed=1
     "$CURRENT_LINK/.venv/bin/python" -m pip check || failed=1
     (
         cd "$CURRENT_LINK/backend"
@@ -975,6 +978,7 @@ configure_smtp_helo_name() {
 configure_remnawave() {
     local backup url token cookies
     require_installed
+    show_remnawave_v3_scope_requirements
     prompt_default "URL API Remnawave" "$(env_get REMNAWAVE_API_URL)" url
     validate_https_url "$url" || die "URL должен использовать HTTPS."
     prompt_secret "Новый токен Remnawave (не менее 32 символов)" token

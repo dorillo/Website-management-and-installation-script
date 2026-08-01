@@ -397,6 +397,8 @@ initial_install() {
     create_environment_file "$database_password" "$release"
     validate_environment_schema_for_release "$release"
     validate_application_environment "$release"
+    validate_remnawave_v3_access "$release" || \
+        die "Токен или API Remnawave несовместимы с устанавливаемой версией сайта."
     ln -sfn "$release" "$CURRENT_LINK"
 
     CURRENT_SHA="$sha"

@@ -125,6 +125,10 @@ grep -Fq 'prompt_public_site_url' "$ROOT/lib/config.sh"
 grep -Fq 'configure_public_site_url' "$ROOT/lib/operations.sh"
 grep -Fq 'REMNAWAVE_COOKIES_JSON=$REMNAWAVE_COOKIES_JSON_INPUT' "$ROOT/lib/config.sh"
 grep -Fq 'prompt_secret_optional' "$ROOT/lib/config.sh"
+grep -Fq 'validate_remnawave_v3_access "$release"' "$ROOT/lib/deploy.sh"
+grep -Fq 'validate_remnawave_v3_access "$new_release"' "$ROOT/lib/operations.sh"
+grep -Fq 'validate_remnawave_v3_access "$CURRENT_LINK" || failed=1' \
+    "$ROOT/lib/operations.sh"
 grep -Fq 'validate_remnawave_cookies_input' "$ROOT/lib/deploy.sh"
 grep -Fq 'env_set ADMIN_BOOTSTRAP_EMAILS ""' "$ROOT/lib/operations.sh"
 grep -Fq 'apply_environment_change "$backup" restart' "$ROOT/lib/operations.sh"
@@ -307,6 +311,7 @@ fi
         [[ "$1" != "is-active" ]]
     }
     validate_application_environment() { return 0; }
+    remnawave_environment_changed() { return 1; }
     wait_for_local_health() { return 0; }
     success() { :; }
 
@@ -563,7 +568,8 @@ grep -q '^shopt -s inherit_errexit$' "$ROOT/install.sh"
 grep -Fq 'log_format vpn_site_access' "$ROOT/templates/nginx.conf"
 grep -Fq '"/payments/:reference"' "$ROOT/templates/nginx.conf"
 ! grep -Fq '$http_referer' "$ROOT/templates/nginx.conf"
-grep -Fq 'proxy_read_timeout 60s;' "$ROOT/templates/nginx.conf"
+grep -Fq 'proxy_read_timeout 240s;' "$ROOT/templates/nginx.conf"
+grep -Fq 'proxy_send_timeout 240s;' "$ROOT/templates/nginx.conf"
 grep -Fq 'ExecStartPre=/opt/vpn-site-manager/current/bin/envexec.py /etc/vpn-site/vpn-site.env /opt/vpn-site/current/.venv/bin/python -m alembic -c /opt/vpn-site/current/alembic.ini check' \
     "$ROOT/templates/vpn-site.service"
 grep -Fq -- '--no-server-header --no-access-log' "$ROOT/templates/vpn-site.service"

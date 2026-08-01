@@ -466,6 +466,7 @@ collect_installation_settings() {
         "$DEFAULT_MAIL_FROM_NAME" MAIL_FROM_NAME_INPUT
 
     printf '\nНастройка Remnawave\n'
+    show_remnawave_v3_scope_requirements
     prompt "URL API Remnawave (например https://panel.example.com/api)" REMNAWAVE_API_URL_INPUT
     validate_https_url "$REMNAWAVE_API_URL_INPUT" || die "URL API Remnawave должен использовать HTTPS."
     prompt_secret "Токен Remnawave (не менее 32 символов)" REMNAWAVE_TOKEN_INPUT
@@ -509,6 +510,40 @@ validate_application_environment() {
         "$(envexec_path)" "$ENV_FILE" "$release/.venv/bin/python" \
             -c 'import config; print("configuration is valid")'
     )
+}
+
+show_remnawave_v3_scope_requirements() {
+    info "Для Remnawave 3.x токену нужны scopes: users:stream, users:create, users:update, users:reset-traffic, users:revoke-subscription, users:delete, users:bulk-delete-by-status, users:bulk-extend-expiration-date, hwid-user-devices:list-by-user, hwid-user-devices:delete и internal-squads:get."
+}
+
+validate_remnawave_v3_access() {
+    local release="${1:-$CURRENT_LINK}" probe
+
+    # Legacy releases use the removed by-email endpoint and cannot perform this
+    # read-only Remnawave 3.x contract probe.
+    grep -Fq '"users/stream"' "$release/backend/remnawave_api.py" || return 0
+
+    probe="$MANAGER_CURRENT/bin/remnawave_probe.py"
+    [[ -f "$probe" ]] || probe="$SCRIPT_DIR/bin/remnawave_probe.py"
+    if [[ -f "$probe" ]] && \
+       "$(envexec_path)" "$ENV_FILE" "$release/.venv/bin/python" "$probe"; then
+        return 0
+    fi
+
+    error "Remnawave 3.x отклонил безопасную проверку users/stream или вернул несовместимый ответ."
+    error "Проверьте REMNAWAVE_API_URL, cookie, доступность панели и выдайте токену scope users:stream. Старый users:by-email в Remnawave 3.x не переносится автоматически."
+    show_remnawave_v3_scope_requirements
+    return 1
+}
+
+remnawave_environment_changed() {
+    local previous_environment="$1" key current_value previous_value
+    for key in REMNAWAVE_API_URL REMNAWAVE_TOKEN REMNAWAVE_COOKIES_JSON; do
+        current_value="$(env_get "$key" 2>/dev/null || true)"
+        previous_value="$("$(envctl_path)" get "$previous_environment" "$key" 2>/dev/null || true)"
+        [[ "$current_value" == "$previous_value" ]] || return 0
+    done
+    return 1
 }
 
 backup_environment() {
@@ -567,6 +602,12 @@ apply_environment_change() {
     if ! validate_application_environment; then
         install -o root -g "$APP_GROUP" -m 0640 "$backup" "$ENV_FILE"
         die "Проверка конфигурации не пройдена; предыдущий файл восстановлен."
+    fi
+    if remnawave_environment_changed "$backup" && \
+       ! validate_remnawave_v3_access "$CURRENT_LINK"; then
+        install -o root -g "$APP_GROUP" -m 0640 "$backup" "$ENV_FILE"
+        ACTIVE_ENV_BACKUP=""
+        die "Новые настройки Remnawave не прошли проверку; предыдущий файл восстановлен."
     fi
     if (( was_active == 0 )) && [[ "$start_policy" != "restart" ]]; then
         ACTIVE_ENV_BACKUP=""

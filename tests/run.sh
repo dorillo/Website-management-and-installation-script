@@ -16,7 +16,7 @@ else
 fi
 
 "$PYTHON" -m unittest discover -s tests -p 'test_*.py' -v
-"$PYTHON" -m py_compile bin/envctl.py bin/envexec.py
+"$PYTHON" -m py_compile bin/envctl.py bin/envexec.py bin/remnawave_probe.py
 
 if command -v shellcheck >/dev/null 2>&1; then
     # The lib files are sourced modules, so cross-file globals look unused to
