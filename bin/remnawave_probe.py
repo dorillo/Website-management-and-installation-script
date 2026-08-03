@@ -11,6 +11,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlsplit
 from urllib.request import (
     HTTPRedirectHandler,
+    ProxyHandler,
     Request,
     build_opener,
 )
@@ -154,7 +155,7 @@ def probe(api_url: str, token: str, cookie_value: str, opener=None) -> None:
         )
 
     request = Request(build_probe_url(api_url), headers=headers, method="GET")
-    client = opener or build_opener(NoRedirectHandler())
+    client = opener or build_opener(ProxyHandler({}), NoRedirectHandler())
     with client.open(request, timeout=20) as response:
         if response.status != 200:
             raise ProbeError(f"unexpected HTTP status {response.status}")

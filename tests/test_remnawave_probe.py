@@ -4,6 +4,8 @@ import importlib.util
 import json
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+from urllib.request import ProxyHandler
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -103,6 +105,30 @@ class RemnawaveProbeTests(unittest.TestCase):
         self.assertEqual(
             remnawave_probe.parse_cookies('{"~*access@edge=cookie-value"}'),
             {"access@edge": "cookie-value"},
+        )
+
+    def test_probe_ignores_ambient_proxy_configuration(self) -> None:
+        opener = FakeOpener(FakeResponse({
+            "response": {"users": [], "hasMore": False, "nextCursor": None}
+        }))
+
+        with patch.object(
+            remnawave_probe,
+            "build_opener",
+            return_value=opener,
+        ) as build_opener:
+            remnawave_probe.probe(
+                "https://panel.example.test/api",
+                "a" * 32,
+                "{}",
+            )
+
+        handlers = build_opener.call_args.args
+        self.assertIsInstance(handlers[0], ProxyHandler)
+        self.assertEqual(handlers[0].proxies, {})
+        self.assertIsInstance(
+            handlers[1],
+            remnawave_probe.NoRedirectHandler,
         )
 
 
