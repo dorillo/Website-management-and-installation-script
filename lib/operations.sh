@@ -216,6 +216,23 @@ require_manager_owned_database() {
         die "Бэкап и восстановление менеджера поддерживают только созданную им локальную БД vpn_site."
 }
 
+prune_expired_backups() {
+    local retention_minutes
+    retention_minutes="$((BACKUP_RETENTION_DAYS * 1440 - 1))"
+    find "$DB_BACKUP_DIR" -type f -name '*.dump' \
+        -mmin "+$retention_minutes" -delete || \
+        warn "Не удалось удалить часть устаревших дампов."
+    find "$CONFIG_BACKUP_DIR" -type f -name '*.tar.gz' \
+        -mmin "+$retention_minutes" -delete || \
+        warn "Не удалось удалить часть устаревших архивов конфигурации."
+    find "$CONFIG_BACKUP_DIR" -type f -name 'vpn-site-env-*' \
+        -mmin "+$retention_minutes" -delete || \
+        warn "Не удалось удалить часть устаревших копий окружения."
+    find "$BACKUP_ROOT" -maxdepth 1 -type f -name '*.txt' \
+        -mmin "+$retention_minutes" -delete || \
+        warn "Не удалось удалить часть устаревших метаданных."
+}
+
 create_backup() {
     local timestamp database_backup database_temporary config_backup config_temporary
     local metadata database_checksum config_checksum retention_policy="${1:-apply-retention}"
@@ -294,19 +311,104 @@ create_backup() {
         return 1
     fi
     if [[ "$retention_policy" == "apply-retention" ]]; then
-        find "$DB_BACKUP_DIR" -type f -name '*.dump' \
-            -mtime "+$BACKUP_RETENTION_DAYS" -delete || \
-            warn "Не удалось удалить часть устаревших дампов."
-        find "$CONFIG_BACKUP_DIR" -type f -name '*.tar.gz' \
-            -mtime "+$BACKUP_RETENTION_DAYS" -delete || \
-            warn "Не удалось удалить часть устаревших архивов конфигурации."
-        find "$BACKUP_ROOT" -maxdepth 1 -type f -name '*.txt' \
-            -mtime "+$BACKUP_RETENTION_DAYS" -delete || \
-            warn "Не удалось удалить часть устаревших метаданных."
+        prune_expired_backups
     fi
     CREATED_DATABASE_BACKUP="$database_backup"
     success "Резервная копия создана: $database_backup"
     printf '%s\n' "$database_backup"
+}
+
+parse_backup_selection() {
+    local input="$1" maximum="$2" token
+    local -a tokens=()
+    local -A selected=()
+    input="${input//,/ }"
+    read -r -a tokens <<<"$input"
+    (( ${#tokens[@]} > 0 )) || return 1
+    for token in "${tokens[@]}"; do
+        [[ "$token" =~ ^[1-9][0-9]*$ ]] || return 1
+        (( 10#$token <= maximum )) || return 1
+        if [[ ! -v "selected[$token]" ]]; then
+            selected["$token"]=1
+            printf '%d\n' "$((10#$token - 1))"
+        fi
+    done
+}
+
+remove_backup_item() {
+    local kind="$1" backup="$2" filename stem
+    filename="$(basename -- "$backup")"
+    case "$kind" in
+        full)
+            [[ "$(dirname -- "$backup")" == "$DB_BACKUP_DIR" && \
+               "$filename" =~ ^vpn-site-[0-9]{8}T[0-9]{6}Z\.dump$ ]] || return 1
+            stem="${filename%.dump}"
+            rm -f -- "$backup" \
+                "$CONFIG_BACKUP_DIR/$stem.tar.gz" \
+                "$BACKUP_ROOT/$stem.txt"
+            ;;
+        environment)
+            [[ "$(dirname -- "$backup")" == "$CONFIG_BACKUP_DIR" && \
+               "$filename" =~ ^vpn-site-env-[0-9]{8}T[0-9]{6}Z$ ]] || return 1
+            rm -f -- "$backup"
+            ;;
+        *) return 1 ;;
+    esac
+}
+
+delete_backup_interactive() {
+    local selection parsed confirmation item kind backup index failed=0
+    local -a items=() selected_indexes=()
+    require_installed
+    mapfile -t items < <(
+        {
+            find "$DB_BACKUP_DIR" -maxdepth 1 -type f -name '*.dump' \
+                -printf '%T@ full %p\n'
+            find "$CONFIG_BACKUP_DIR" -maxdepth 1 -type f \
+                -name 'vpn-site-env-*' -printf '%T@ environment %p\n'
+        } | sort -rn | cut -d' ' -f2-
+    )
+    (( ${#items[@]} > 0 )) || die "Нет доступных резервных копий."
+
+    printf '\nДоступные резервные копии:\n'
+    for index in "${!items[@]}"; do
+        item="${items[$index]}"
+        kind="${item%% *}"
+        backup="${item#* }"
+        if [[ "$kind" == "full" ]]; then
+            printf '%d. Полная копия: %s\n' "$((index + 1))" "$backup"
+        else
+            printf '%d. Копия окружения: %s\n' "$((index + 1))" "$backup"
+        fi
+    done
+
+    prompt "Номер или номера копий (через пробел или запятую)" selection
+    if ! parsed="$(parse_backup_selection "$selection" "${#items[@]}")"; then
+        die "Укажите один или несколько номеров из списка."
+    fi
+    mapfile -t selected_indexes <<<"$parsed"
+
+    printf '\nБудут удалены:\n'
+    for index in "${selected_indexes[@]}"; do
+        printf -- '- %s\n' "${items[$index]#* }"
+    done
+    printf 'Введите УДАЛИТЬ для подтверждения: ' >/dev/tty
+    IFS= read -r confirmation </dev/tty
+    [[ "$confirmation" == "УДАЛИТЬ" || "$confirmation" == "DELETE" ]] || \
+        die "Удаление отменено."
+
+    for index in "${selected_indexes[@]}"; do
+        item="${items[$index]}"
+        kind="${item%% *}"
+        backup="${item#* }"
+        if remove_backup_item "$kind" "$backup"; then
+            success "Резервная копия удалена: $backup"
+        else
+            error "Не удалось полностью удалить резервную копию: $backup"
+            failed=1
+        fi
+    done
+    (( failed == 0 ))
 }
 
 restore_database_archive() {
@@ -1175,7 +1277,8 @@ backup_menu() {
         printf '1. Создать резервную копию сейчас\n'
         printf '2. Показать резервные копии\n'
         printf '3. Восстановить базу данных\n'
-        printf '4. Изменить срок хранения\n'
+        printf '4. Удалить резервные копии\n'
+        printf '5. Изменить срок хранения\n'
         printf '0. Назад\n\n'
         printf 'Выберите пункт: ' >/dev/tty
         IFS= read -r choice </dev/tty
@@ -1183,7 +1286,8 @@ backup_menu() {
             1) create_backup; pause ;;
             2) find "$BACKUP_ROOT" -maxdepth 2 -type f -printf '%TY-%Tm-%Td %TH:%TM %10s %p\n' | sort -r; pause ;;
             3) restore_backup_interactive; pause ;;
-            4) configure_backup_retention; pause ;;
+            4) delete_backup_interactive; pause ;;
+            5) configure_backup_retention; pause ;;
             0) return 0 ;;
             *) warn "Неизвестный пункт меню."; pause ;;
         esac

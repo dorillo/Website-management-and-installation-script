@@ -55,6 +55,35 @@ validate_integer_range 14 1 3650
 ! validate_integer_range 0 1 3650
 ! validate_integer_range text 1 3650
 
+(
+    # shellcheck source=../lib/operations.sh
+    source "$ROOT/lib/operations.sh"
+    parsed="$(parse_backup_selection '3, 1 3,2' 3)"
+    [[ "$parsed" == $'2\n0\n1' ]]
+    ! parse_backup_selection '1;2' 3
+    ! parse_backup_selection '0 1' 3
+    ! parse_backup_selection '1 4' 3
+    ! parse_backup_selection '01' 3
+
+    retention_calls="$(
+        find() { printf '%s\n' "$*"; }
+        BACKUP_RETENTION_DAYS=7
+        prune_expired_backups
+    )"
+    [[ "$(grep -o -- '-mmin +10079' <<<"$retention_calls" | wc -l)" -eq 4 ]]
+    [[ "$retention_calls" == *"-name vpn-site-env-*"* ]]
+
+    rm() { printf '%s\n' "$*"; }
+    removal="$(remove_backup_item full \
+        "$DB_BACKUP_DIR/vpn-site-20260804T120000Z.dump")"
+    [[ "$removal" == *"$CONFIG_BACKUP_DIR/vpn-site-20260804T120000Z.tar.gz"* ]]
+    [[ "$removal" == *"$BACKUP_ROOT/vpn-site-20260804T120000Z.txt"* ]]
+    removal="$(remove_backup_item environment \
+        "$CONFIG_BACKUP_DIR/vpn-site-env-20260804T120000Z")"
+    [[ "$removal" == *"$CONFIG_BACKUP_DIR/vpn-site-env-20260804T120000Z"* ]]
+    ! remove_backup_item full "$DB_BACKUP_DIR/../outside.dump"
+)
+
 assert_valid validate_ascii_graphic 'smtp-user_123'
 assert_invalid validate_ascii_graphic 'smtp user'
 assert_invalid validate_ascii_graphic 'пароль'
