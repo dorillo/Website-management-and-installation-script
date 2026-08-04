@@ -357,7 +357,7 @@ remove_backup_item() {
 }
 
 delete_backup_interactive() {
-    local selection parsed confirmation item kind backup index failed=0
+    local selection parsed item kind backup index failed=0
     local -a items=() selected_indexes=()
     require_installed
     mapfile -t items < <(
@@ -392,10 +392,10 @@ delete_backup_interactive() {
     for index in "${selected_indexes[@]}"; do
         printf -- '- %s\n' "${items[$index]#* }"
     done
-    printf 'Введите УДАЛИТЬ для подтверждения: ' >/dev/tty
-    IFS= read -r confirmation </dev/tty
-    [[ "$confirmation" == "УДАЛИТЬ" || "$confirmation" == "DELETE" ]] || \
-        die "Удаление отменено."
+    confirm "Удалить выбранные резервные копии?" no || {
+        warn "Удаление отменено."
+        return 0
+    }
 
     for index in "${selected_indexes[@]}"; do
         item="${items[$index]}"

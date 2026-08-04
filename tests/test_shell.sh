@@ -161,6 +161,9 @@ grep -Fq 'validate_remnawave_v3_access "$CURRENT_LINK" || failed=1' \
 grep -Fq 'validate_remnawave_cookies_input' "$ROOT/lib/deploy.sh"
 grep -Fq 'env_set ADMIN_BOOTSTRAP_EMAILS ""' "$ROOT/lib/operations.sh"
 grep -Fq 'apply_environment_change "$backup" restart' "$ROOT/lib/operations.sh"
+grep -Fq 'confirm "Удалить выбранные резервные копии?" no' \
+    "$ROOT/lib/operations.sh"
+! grep -Fq 'Введите УДАЛИТЬ для подтверждения' "$ROOT/lib/operations.sh"
 grep -Fq 'finish_admin_bootstrap' "$ROOT/lib/deploy.sh"
 
 (
