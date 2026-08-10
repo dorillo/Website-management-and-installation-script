@@ -66,6 +66,29 @@ class RemnawaveProbeTests(unittest.TestCase):
         self.assertEqual(opener.request.get_header("Cookie"), "access=cookie-value")
         self.assertEqual(opener.timeout, 20)
 
+    def test_accepts_panel_3_2_3_optional_user_fields(self) -> None:
+        # Panel 3.2.3 may include fields added to the user contract. The site
+        # only depends on numeric id and email for its stream lookup.
+        opener = FakeOpener(FakeResponse({
+            "response": {
+                "users": [{
+                    "id": 42,
+                    "email": remnawave_probe.PROBE_EMAIL,
+                    "vlessUuid": "not-an-rfc4122-uuid-but-a-guid",
+                    "nodeIps": [],
+                }],
+                "hasMore": False,
+                "nextCursor": None,
+            }
+        }))
+
+        remnawave_probe.probe(
+            "https://panel.example.test/api",
+            "a" * 32,
+            "{}",
+            opener=opener,
+        )
+
     def test_rejects_legacy_uuid_user_response(self) -> None:
         document = {
             "response": {
