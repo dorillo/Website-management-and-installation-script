@@ -113,10 +113,10 @@ class ManagerContractTests(unittest.TestCase):
         update_stop = operations.index('systemctl stop "$SERVICE_NAME"', update_probe)
         self.assertLess(update_probe, update_stop)
 
-    def test_remnawave_3_3_0_contract_is_documented(self) -> None:
+    def test_remnawave_3_3_2_contract_is_documented(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        self.assertIn("Remnawave 3.0.0-3.3.0", readme)
-        self.assertIn("Panel 3.3.0 сохраняет endpoints, payloads и scopes", readme)
+        self.assertIn("Remnawave 3.0.0-3.3.2", readme)
+        self.assertIn("Panel 3.3.2 сохраняет endpoints, payloads и scopes", readme)
         self.assertIn('"users/stream"', (ROOT / "lib" / "config.sh").read_text(encoding="utf-8"))
 
     def test_nginx_allows_remnawave_v3_guarded_mutations(self) -> None:
