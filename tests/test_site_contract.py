@@ -126,6 +126,24 @@ class ManagerContractTests(unittest.TestCase):
         self.assertIn("proxy_read_timeout 240s;", nginx)
         self.assertIn("proxy_send_timeout 240s;", nginx)
 
+    def test_nginx_redacts_current_sensitive_paths(self) -> None:
+        nginx = (ROOT / "templates" / "nginx.conf").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("map $uri $vpn_site_log_path", nginx)
+        self.assertIn(
+            '~^/go/[^/]+(?:/.*)?$ "/go/:token";',
+            nginx,
+        )
+        self.assertIn(
+            '~^/payments/[^/]+/sync$ "/payments/:reference/sync";',
+            nginx,
+        )
+        self.assertIn(
+            '~^/payments/[^/]+$ "/payments/:reference";',
+            nginx,
+        )
+
 
 @unittest.skipUnless(SITE_ROOT.is_dir(), "adjacent vpn-site checkout is absent")
 class CrossRepositoryContractTests(unittest.TestCase):
