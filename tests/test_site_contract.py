@@ -90,6 +90,16 @@ class ManagerContractTests(unittest.TestCase):
         self.assertIn("verify_referral_ledger_migration", operations)
         self.assertIn("20260729_0012", operations)
 
+    def test_current_free_key_migration_has_manager_guards(self) -> None:
+        operations = (ROOT / "lib" / "operations.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("preflight_free_key_expiration_migration", operations)
+        self.assertIn("verify_free_key_expiration_migration", operations)
+        self.assertIn("20260901_0017", operations)
+        self.assertIn("expires_on IS NULL", operations)
+        self.assertIn("free_key_copy_events", operations)
+
     def test_remnawave_v3_probe_is_part_of_managed_workflows(self) -> None:
         config = (ROOT / "lib" / "config.sh").read_text(encoding="utf-8")
         deploy = (ROOT / "lib" / "deploy.sh").read_text(encoding="utf-8")

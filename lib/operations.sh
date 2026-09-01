@@ -589,6 +589,7 @@ clear_update_state() {
     UPDATE_RUNTIME_BACKUP=""
     UPDATE_DATABASE_DIRTY=0
     UPDATE_REFERRAL_LEDGER_PENDING=0
+    UPDATE_FREE_KEY_EXPIRATION_PENDING=0
     UPDATE_BACKUP_TIMER_WAS_ENABLED=0
     UPDATE_DEFAULT_NGINX_STATE=""
 }
@@ -747,6 +748,74 @@ SELECT
     fi
 }
 
+preflight_free_key_expiration_migration() {
+    local release="$1" revision empty_key_locations=0 empty_snapshot_locations=0
+    UPDATE_FREE_KEY_EXPIRATION_PENDING=0
+    grep -Rqs 'revision.*20260901_0017' \
+        "$release/backend/database/alembic/versions" || return 0
+
+    revision="$(runuser -u postgres -- psql --dbname=vpn_site \
+        --tuples-only --no-align --set=ON_ERROR_STOP=1 \
+        --command 'SELECT version_num FROM alembic_version LIMIT 1')"
+    case "$revision" in
+        20260713_0001|20260713_0002|20260718_0003|20260719_0004|\
+        20260720_0005|20260720_0006|20260720_0007|20260720_0008|\
+        20260726_0009|20260726_0010|20260727_0011|20260729_0012|\
+        20260827_0013|20260828_0014|20260828_0015|20260828_0016)
+            UPDATE_FREE_KEY_EXPIRATION_PENDING=1
+            ;;
+        *) return 0 ;;
+    esac
+
+    empty_key_locations="$(runuser -u postgres -- psql --dbname=vpn_site \
+        --tuples-only --no-align --set=ON_ERROR_STOP=1 \
+        --command "SELECT count(*) FROM free_keys WHERE btrim(country) = ''")"
+    (( empty_key_locations == 0 )) || die \
+        "Обновление остановлено до изменения БД: migration 0017 не может определить локацию у $empty_key_locations бесплатных ключей с пустым country. Исправьте локации через текущую админ-панель и повторите обновление."
+
+    case "$revision" in
+        20260827_0013|20260828_0014|20260828_0015|20260828_0016)
+            empty_snapshot_locations="$(runuser -u postgres -- psql --dbname=vpn_site \
+                --tuples-only --no-align --set=ON_ERROR_STOP=1 \
+                --command "
+SELECT count(*)
+FROM free_key_copy_events
+WHERE country_snapshot ~* '•[[:space:]]*до[[:space:]]+[0-9]{2}[.][0-9]{2}[[:space:]]*$'
+  AND btrim(regexp_replace(
+      country_snapshot,
+      '[[:space:]]*•[[:space:]]*до[[:space:]]+[0-9]{2}[.][0-9]{2}[[:space:]]*$',
+      '',
+      'i'
+  )) = '';")"
+            (( empty_snapshot_locations == 0 )) || die \
+                "Обновление остановлено до изменения БД: migration 0017 не может определить локацию у $empty_snapshot_locations событий аналитики бесплатных ключей. Эти неизменяемые записи нельзя исправлять автоматически; проверьте источник данных перед обновлением."
+            ;;
+    esac
+}
+
+verify_free_key_expiration_migration() {
+    local verification
+    (( UPDATE_FREE_KEY_EXPIRATION_PENDING == 1 )) || return 0
+
+    verification="$(runuser -u postgres -- psql --dbname=vpn_site \
+        --tuples-only --no-align --field-separator='|' --set=ON_ERROR_STOP=1 \
+        --command "
+SELECT
+    (SELECT count(*) FROM free_keys WHERE expires_on IS NULL),
+    (SELECT count(*) FROM free_keys WHERE btrim(country) = ''),
+    (SELECT count(*) FROM free_keys
+     WHERE country ~* '•[[:space:]]*до[[:space:]]+[0-9]{2}[.][0-9]{2}[[:space:]]*$'),
+    (SELECT count(*) FROM free_key_copy_events
+     WHERE country_snapshot ~* '•[[:space:]]*до[[:space:]]+[0-9]{2}[.][0-9]{2}[[:space:]]*$');")" || {
+        error "Не удалось проверить результат migration 0017."
+        return 1
+    }
+    if [[ "$verification" != "0|0|0|0" ]]; then
+        error "Migration 0017 оставила несогласованные локации или сроки бесплатных ключей (проверка: $verification)."
+        return 1
+    fi
+}
+
 rollback_update_from_trap() {
     local failed=0
     (( UPDATE_IN_PROGRESS == 1 )) || return 0
@@ -851,6 +920,7 @@ update_site() {
     systemctl stop "$SERVICE_NAME"
     preflight_legacy_payment_migration "$new_release"
     preflight_referral_ledger_migration "$new_release"
+    preflight_free_key_expiration_migration "$new_release"
     if ! create_backup >/dev/null; then
         rollback_update_and_die "Не удалось создать резервную копию остановленного сайта."
     fi
@@ -874,6 +944,9 @@ update_site() {
     fi
     if ! verify_referral_ledger_migration; then
         rollback_update_and_die "Начальное состояние referral ledger после migration 0012 не прошло проверку."
+    fi
+    if ! verify_free_key_expiration_migration; then
+        rollback_update_and_die "Локации или сроки бесплатных ключей после migration 0017 не прошли проверку."
     fi
     if ! activate_tls_nginx "$DOMAIN" local-validation "$new_release"; then
         rollback_update_and_die "Не удалось закрыть Nginx для локальной проверки."

@@ -507,10 +507,15 @@ legacy_preflight_line="$(awk -v start="$update_stop_line" \
 referral_preflight_line="$(awk -v start="$update_stop_line" \
     'NR > start && /preflight_referral_ledger_migration/ {print NR; exit}' \
     "$ROOT/lib/operations.sh")"
+free_key_preflight_line="$(awk -v start="$update_stop_line" \
+    'NR > start && /preflight_free_key_expiration_migration/ {print NR; exit}' \
+    "$ROOT/lib/operations.sh")"
 (( update_stop_line < legacy_preflight_line && \
     legacy_preflight_line < referral_preflight_line && \
-    referral_preflight_line < update_backup_line ))
+    referral_preflight_line < free_key_preflight_line && \
+    free_key_preflight_line < update_backup_line ))
 grep -Fq 'verify_referral_ledger_migration' "$ROOT/lib/operations.sh"
+grep -Fq 'verify_free_key_expiration_migration' "$ROOT/lib/operations.sh"
 grep -Fq 'amount_value !~' "$ROOT/lib/operations.sh"
 
 (
@@ -555,6 +560,52 @@ if (
     preflight_referral_ledger_migration "$sandbox/release"
 ); then
     printf 'Malformed referral-ledger amounts were accepted.\n' >&2
+    exit 1
+fi
+
+(
+    # shellcheck source=../lib/operations.sh
+    source "$ROOT/lib/operations.sh"
+    sandbox="$(mktemp -d)"
+    trap 'rm -rf -- "$sandbox"' EXIT
+    mkdir -p "$sandbox/release/backend/database/alembic/versions"
+    printf 'revision: str = "20260901_0017"\n' \
+        >"$sandbox/release/backend/database/alembic/versions/0017.py"
+    runuser() {
+        case "$*" in
+            *'SELECT version_num'*) printf '%s\n' 20260828_0016 ;;
+            *'expires_on IS NULL'*) printf '%s\n' '0|0|0|0' ;;
+            *'FROM free_keys WHERE btrim(country)'*) printf '%s\n' 0 ;;
+            *'FROM free_key_copy_events'*) printf '%s\n' 0 ;;
+            *) return 1 ;;
+        esac
+    }
+
+    preflight_free_key_expiration_migration "$sandbox/release"
+    (( UPDATE_FREE_KEY_EXPIRATION_PENDING == 1 ))
+    verify_free_key_expiration_migration
+)
+
+if (
+    # shellcheck source=../lib/operations.sh
+    source "$ROOT/lib/operations.sh"
+    sandbox="$(mktemp -d)"
+    trap 'rm -rf -- "$sandbox"' EXIT
+    mkdir -p "$sandbox/release/backend/database/alembic/versions"
+    printf 'revision: str = "20260901_0017"\n' \
+        >"$sandbox/release/backend/database/alembic/versions/0017.py"
+    runuser() {
+        case "$*" in
+            *'SELECT version_num'*) printf '%s\n' 20260828_0016 ;;
+            *'FROM free_keys WHERE btrim(country)'*) printf '%s\n' 1 ;;
+            *) return 1 ;;
+        esac
+    }
+    error() { :; }
+
+    preflight_free_key_expiration_migration "$sandbox/release"
+); then
+    printf 'Empty free-key locations were accepted.\n' >&2
     exit 1
 fi
 
