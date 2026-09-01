@@ -66,8 +66,8 @@ class RemnawaveProbeTests(unittest.TestCase):
         self.assertEqual(opener.request.get_header("Cookie"), "access=cookie-value")
         self.assertEqual(opener.timeout, 20)
 
-    def test_accepts_panel_3_4_1_optional_user_fields(self) -> None:
-        # Panel 3.4.1 keeps this response contract and may add optional fields.
+    def test_accepts_panel_3_4_3_optional_user_fields(self) -> None:
+        # Panel 3.4.3 keeps this response contract and may add optional fields.
         # The site only depends on numeric id and email for its stream lookup.
         opener = FakeOpener(FakeResponse({
             "response": {
