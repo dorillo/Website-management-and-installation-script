@@ -554,12 +554,17 @@ referral_preflight_line="$(awk -v start="$update_stop_line" \
 free_key_preflight_line="$(awk -v start="$update_stop_line" \
     'NR > start && /preflight_free_key_expiration_migration/ {print NR; exit}' \
     "$ROOT/lib/operations.sh")"
+free_key_window_preflight_line="$(awk -v start="$update_stop_line" \
+    'NR > start && /preflight_free_key_action_window_migration/ {print NR; exit}' \
+    "$ROOT/lib/operations.sh")"
 (( update_stop_line < legacy_preflight_line && \
     legacy_preflight_line < referral_preflight_line && \
     referral_preflight_line < free_key_preflight_line && \
-    free_key_preflight_line < update_backup_line ))
+    free_key_preflight_line < free_key_window_preflight_line && \
+    free_key_window_preflight_line < update_backup_line ))
 grep -Fq 'verify_referral_ledger_migration' "$ROOT/lib/operations.sh"
 grep -Fq 'verify_free_key_expiration_migration' "$ROOT/lib/operations.sh"
+grep -Fq 'verify_free_key_action_window_migration' "$ROOT/lib/operations.sh"
 grep -Fq 'amount_value !~' "$ROOT/lib/operations.sh"
 
 (
@@ -650,6 +655,51 @@ if (
     preflight_free_key_expiration_migration "$sandbox/release"
 ); then
     printf 'Empty free-key locations were accepted.\n' >&2
+    exit 1
+fi
+
+(
+    # shellcheck source=../lib/operations.sh
+    source "$ROOT/lib/operations.sh"
+    sandbox="$(mktemp -d)"
+    trap 'rm -rf -- "$sandbox"' EXIT
+    mkdir -p "$sandbox/release/backend/database/alembic/versions"
+    printf 'revision: str = "20260905_0020"\n' \
+        >"$sandbox/release/backend/database/alembic/versions/0020.py"
+    runuser() {
+        case "$*" in
+            *'SELECT version_num'*) printf '%s\n' 20260904_0019 ;;
+            *'information_schema.columns'*) printf '%s\n' '2|0|1|1|1' ;;
+            *) return 1 ;;
+        esac
+    }
+
+    preflight_free_key_action_window_migration "$sandbox/release"
+    (( UPDATE_FREE_KEY_ACTION_WINDOW_PENDING == 1 ))
+    verify_free_key_action_window_migration
+)
+
+if (
+    # shellcheck source=../lib/operations.sh
+    source "$ROOT/lib/operations.sh"
+    sandbox="$(mktemp -d)"
+    trap 'rm -rf -- "$sandbox"' EXIT
+    mkdir -p "$sandbox/release/backend/database/alembic/versions"
+    printf 'revision: str = "20260905_0020"\n' \
+        >"$sandbox/release/backend/database/alembic/versions/0020.py"
+    runuser() {
+        case "$*" in
+            *'SELECT version_num'*) printf '%s\n' 20260904_0019 ;;
+            *'information_schema.columns'*) printf '%s\n' '2|1|1|1|1' ;;
+            *) return 1 ;;
+        esac
+    }
+    error() { :; }
+
+    preflight_free_key_action_window_migration "$sandbox/release"
+    verify_free_key_action_window_migration
+); then
+    printf 'Invalid free-key action windows were accepted.\n' >&2
     exit 1
 fi
 

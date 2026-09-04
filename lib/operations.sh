@@ -590,6 +590,7 @@ clear_update_state() {
     UPDATE_DATABASE_DIRTY=0
     UPDATE_REFERRAL_LEDGER_PENDING=0
     UPDATE_FREE_KEY_EXPIRATION_PENDING=0
+    UPDATE_FREE_KEY_ACTION_WINDOW_PENDING=0
     UPDATE_BACKUP_TIMER_WAS_ENABLED=0
     UPDATE_DEFAULT_NGINX_STATE=""
 }
@@ -816,6 +817,59 @@ SELECT
     fi
 }
 
+preflight_free_key_action_window_migration() {
+    local release="$1" revision
+    UPDATE_FREE_KEY_ACTION_WINDOW_PENDING=0
+    grep -Rqs 'revision.*20260905_0020' \
+        "$release/backend/database/alembic/versions" || return 0
+
+    revision="$(runuser -u postgres -- psql --dbname=vpn_site \
+        --tuples-only --no-align --set=ON_ERROR_STOP=1 \
+        --command 'SELECT version_num FROM alembic_version LIMIT 1')"
+    case "$revision" in
+        20260713_0001|20260713_0002|20260718_0003|20260719_0004|\
+        20260720_0005|20260720_0006|20260720_0007|20260720_0008|\
+        20260726_0009|20260726_0010|20260727_0011|20260729_0012|\
+        20260827_0013|20260828_0014|20260828_0015|20260828_0016|\
+        20260901_0017|20260903_0018|20260904_0019)
+            UPDATE_FREE_KEY_ACTION_WINDOW_PENDING=1
+            ;;
+        *) return 0 ;;
+    esac
+}
+
+verify_free_key_action_window_migration() {
+    local verification
+    (( UPDATE_FREE_KEY_ACTION_WINDOW_PENDING == 1 )) || return 0
+
+    verification="$(runuser -u postgres -- psql --dbname=vpn_site \
+        --tuples-only --no-align --field-separator='|' --set=ON_ERROR_STOP=1 \
+        --command "
+SELECT
+    (SELECT count(*) FROM information_schema.columns
+     WHERE table_schema = 'public' AND table_name = 'free_keys'
+       AND column_name IN ('starts_at', 'expires_at')
+       AND is_nullable = 'NO'),
+    (SELECT count(*) FROM free_keys
+     WHERE starts_at IS NULL OR expires_at IS NULL OR expires_at <= starts_at),
+    (SELECT count(*) FROM pg_trigger
+     WHERE tgrelid = 'public.free_keys'::regclass
+       AND tgname = 'free_keys_expiration_compatibility'),
+    (SELECT count(*) FROM pg_constraint
+     WHERE conrelid = 'public.free_keys'::regclass
+       AND conname = 'ck_free_keys_expiration_after_start'),
+    (SELECT count(*) FROM pg_indexes
+     WHERE schemaname = 'public' AND tablename = 'free_keys'
+       AND indexname = 'ix_free_keys_active_window');")" || {
+        error "Не удалось проверить результат migration 0020."
+        return 1
+    }
+    if [[ "$verification" != "2|0|1|1|1" ]]; then
+        error "Migration 0020 оставила несогласованное окно действия бесплатных ключей (проверка: $verification)."
+        return 1
+    fi
+}
+
 rollback_update_from_trap() {
     local failed=0
     (( UPDATE_IN_PROGRESS == 1 )) || return 0
@@ -930,6 +984,7 @@ update_site() {
     preflight_legacy_payment_migration "$new_release"
     preflight_referral_ledger_migration "$new_release"
     preflight_free_key_expiration_migration "$new_release"
+    preflight_free_key_action_window_migration "$new_release"
     if ! create_backup >/dev/null; then
         rollback_update_and_die "Не удалось создать резервную копию остановленного сайта."
     fi
@@ -959,6 +1014,9 @@ update_site() {
     fi
     if ! verify_free_key_expiration_migration; then
         rollback_update_and_die "Локации или сроки бесплатных ключей после migration 0017 не прошли проверку."
+    fi
+    if ! verify_free_key_action_window_migration; then
+        rollback_update_and_die "Окна действия бесплатных ключей после migration 0020 не прошли проверку."
     fi
     if ! activate_tls_nginx "$DOMAIN" local-validation "$new_release"; then
         rollback_update_and_die "Не удалось закрыть Nginx для локальной проверки."

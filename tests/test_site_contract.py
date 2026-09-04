@@ -100,6 +100,17 @@ class ManagerContractTests(unittest.TestCase):
         self.assertIn("expires_on IS NULL", operations)
         self.assertIn("free_key_copy_events", operations)
 
+    def test_current_free_key_action_window_migration_has_manager_guards(self) -> None:
+        operations = (ROOT / "lib" / "operations.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("preflight_free_key_action_window_migration", operations)
+        self.assertIn("verify_free_key_action_window_migration", operations)
+        self.assertIn("20260905_0020", operations)
+        self.assertIn("free_keys_expiration_compatibility", operations)
+        self.assertIn("ck_free_keys_expiration_after_start", operations)
+        self.assertIn("ix_free_keys_active_window", operations)
+
     def test_subscription_grace_period_is_managed(self) -> None:
         config = (ROOT / "lib" / "config.sh").read_text(encoding="utf-8")
         operations = (ROOT / "lib" / "operations.sh").read_text(
