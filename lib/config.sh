@@ -123,6 +123,18 @@ prompt_mail_from_name() {
     done
 }
 
+prompt_subscription_grace_period() {
+    local message="$1" default_value="$2" variable_name="$3" value
+    while true; do
+        prompt_default "$message" "$default_value" value
+        if validate_integer_range "$value" 1 365; then
+            printf -v "$variable_name" '%s' "$value"
+            return 0
+        fi
+        warn "Grace period подписок должен быть от 1 до 365 дней."
+    done
+}
+
 migrate_environment_for_release() {
     local release="$1" key public_site_url return_url site_name current_site_name
     local mail_from_name current_mail_from_name smtp_helo_name
@@ -151,6 +163,9 @@ migrate_environment_for_release() {
         ENVIRONMENT_MIGRATED=1
     fi
     env_set_default SUBSCRIPTION_NOTIFICATION_BATCH_SIZE 100
+    if grep -q '^SUBSCRIPTION_GRACE_PERIOD_DAYS=' "$release/.env.example"; then
+        env_set_default SUBSCRIPTION_GRACE_PERIOD_DAYS 7
+    fi
     env_set_default SUBSCRIPTION_NOTIFICATION_CONCURRENCY 5
     env_set_default SUBSCRIPTION_NOTIFICATION_RETRY_MINUTES 5
     env_set_default SMTP_MAX_CONCURRENCY 5
@@ -214,6 +229,11 @@ validate_environment_schema_for_release() {
             failed=1
         fi
     done
+    if grep -q '^SUBSCRIPTION_GRACE_PERIOD_DAYS=' "$release/.env.example" && \
+       ! env_get SUBSCRIPTION_GRACE_PERIOD_DAYS >/dev/null 2>&1; then
+        error "В env-файле отсутствует настройка новой версии: SUBSCRIPTION_GRACE_PERIOD_DAYS"
+        failed=1
+    fi
     site_name="$(release_site_name "$release" 2>/dev/null || true)"
     if [[ "$(env_get SITE_NAME 2>/dev/null || true)" != "$site_name" ]]; then
         error "SITE_NAME не совпадает со статическим брендом выбранного release."
@@ -266,6 +286,7 @@ CORS_ALLOWED_ORIGINS=https://$DOMAIN
 PUBLIC_SITE_URL=$PUBLIC_SITE_URL_INPUT
 TRUSTED_HOSTS=$DOMAIN
 CLEANUP_INTERVAL_SECONDS=60
+SUBSCRIPTION_GRACE_PERIOD_DAYS=$SUBSCRIPTION_GRACE_PERIOD_DAYS_INPUT
 SUBSCRIPTION_NOTIFICATION_BATCH_SIZE=100
 SUBSCRIPTION_NOTIFICATION_CONCURRENCY=5
 SUBSCRIPTION_NOTIFICATION_RETRY_MINUTES=5
@@ -445,6 +466,9 @@ collect_installation_settings() {
     SITE_REF="$value"
 
     prompt_validated_email "Email, которому разрешено стать первым администратором" ADMIN_EMAIL_INPUT
+    prompt_subscription_grace_period \
+        "Grace period истёкших подписок в днях" "7" \
+        SUBSCRIPTION_GRACE_PERIOD_DAYS_INPUT
 
     printf '\nНастройка SMTP (требуется для отправки кодов входа)\n'
     prompt "Хост SMTP" SMTP_HOST_INPUT
@@ -513,7 +537,7 @@ validate_application_environment() {
 }
 
 show_remnawave_v3_scope_requirements() {
-    info "Для Remnawave 3.x токену нужны scopes: users:stream, users:create, users:update, users:reset-traffic, users:revoke-subscription, users:delete, users:bulk-delete-by-status, users:bulk-extend-expiration-date, hwid-user-devices:list-by-user, hwid-user-devices:delete и internal-squads:get."
+    info "Для Remnawave 3.x токену нужны scopes: users:stream, users:create, users:update, users:reset-traffic, users:revoke-subscription, users:delete, users:bulk-extend-expiration-date, hwid-user-devices:list-by-user, hwid-user-devices:delete и internal-squads:get."
 }
 
 validate_remnawave_v3_access() {
@@ -570,6 +594,8 @@ show_environment_summary() {
     printf 'Имя отправителя писем: %s\n' "$mail_from_name"
     printf 'Параллельные SMTP-отправки: %s\n' \
         "$(env_get SMTP_MAX_CONCURRENCY 2>/dev/null || printf 5)"
+    printf 'Grace period истёкших подписок: %s дней\n' \
+        "$(env_get SUBSCRIPTION_GRACE_PERIOD_DAYS 2>/dev/null || printf 7)"
     printf 'URL Remnawave: %s\n' "$(env_get REMNAWAVE_API_URL)"
     if [[ -n "$(env_get YOOKASSA_SHOP_ID || true)" ]]; then
         printf 'YooKassa: настроена\n'

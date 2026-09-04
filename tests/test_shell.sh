@@ -56,6 +56,48 @@ validate_integer_range 14 1 3650
 ! validate_integer_range text 1 3650
 
 (
+    attempts=0
+    prompt_default() {
+        local _message="$1" _default="$2" output_name="$3"
+        (( attempts += 1 ))
+        if (( attempts == 1 )); then
+            printf -v "$output_name" '%s' 0
+        else
+            printf -v "$output_name" '%s' 30
+        fi
+    }
+    warn() { :; }
+
+    prompt_subscription_grace_period "Grace period" 7 selected
+    (( attempts == 2 ))
+    [[ "$selected" == 30 ]]
+)
+
+(
+    # shellcheck source=../lib/operations.sh
+    source "$ROOT/lib/operations.sh"
+    require_installed() { :; }
+    prompt() {
+        local message="$1" output_name="$2"
+        [[ "$message" == "Номер" ]]
+        printf -v "$output_name" '%s' 2
+    }
+    prompt_default() { printf -v "$3" '%s' 30; }
+    env_get() {
+        [[ "$1" == "SUBSCRIPTION_GRACE_PERIOD_DAYS" ]] || return 1
+        printf '%s\n' 7
+    }
+    backup_environment() { printf '%s\n' /tmp/env-backup; }
+    env_set() { selected_key="$1"; selected_value="$2"; }
+    apply_environment_change() { applied_backup="$1"; }
+
+    configure_limits >/dev/null
+    [[ "$selected_key" == "SUBSCRIPTION_GRACE_PERIOD_DAYS" ]]
+    [[ "$selected_value" == 30 ]]
+    [[ "$applied_backup" == /tmp/env-backup ]]
+)
+
+(
     # shellcheck source=../lib/operations.sh
     source "$ROOT/lib/operations.sh"
     parsed="$(parse_backup_selection '3, 1 3,2' 3)"
@@ -227,7 +269,7 @@ fi
     sandbox="$(mktemp -d)"
     trap 'rm -rf -- "$sandbox"' EXIT
     mkdir -p "$sandbox/release"
-    printf 'SITE_NAME=Батя VPN\nMAIL_FROM_NAME=Батя\nSMTP_HELO_NAME=YOUR.PUBLIC.HOSTNAME\nPUBLIC_SITE_URL=https://YOUR.PUBLIC.HOSTNAME\n' \
+    printf 'SITE_NAME=Батя VPN\nMAIL_FROM_NAME=Батя\nSMTP_HELO_NAME=YOUR.PUBLIC.HOSTNAME\nPUBLIC_SITE_URL=https://YOUR.PUBLIC.HOSTNAME\nSUBSCRIPTION_GRACE_PERIOD_DAYS=7\n' \
         >"$sandbox/release/.env.example"
     declare -A values=(
         [SITE_NAME]='Legacy backend name'
@@ -254,6 +296,7 @@ fi
     [[ "${values[MAIL_FROM_NAME]}" == 'Батя' ]]
     [[ "${values[SMTP_HELO_NAME]}" == vpn.example.com ]]
     [[ "${values[SUBSCRIPTION_NOTIFICATION_BATCH_SIZE]}" == 100 ]]
+    [[ "${values[SUBSCRIPTION_GRACE_PERIOD_DAYS]}" == 7 ]]
     [[ "${values[SUBSCRIPTION_NOTIFICATION_CONCURRENCY]}" == 5 ]]
     [[ "${values[SUBSCRIPTION_NOTIFICATION_RETRY_MINUTES]}" == 5 ]]
     [[ "${values[SMTP_MAX_CONCURRENCY]}" == 5 ]]
@@ -311,6 +354,7 @@ fi
     printf 'SITE_NAME=Батя VPN\n' >"$sandbox/release/.env.example"
     declare -A values=(
         [SITE_NAME]='Батя VPN'
+        [SUBSCRIPTION_GRACE_PERIOD_DAYS]=7
         [SUBSCRIPTION_NOTIFICATION_BATCH_SIZE]=100
         [SUBSCRIPTION_NOTIFICATION_CONCURRENCY]=5
         [SUBSCRIPTION_NOTIFICATION_RETRY_MINUTES]=5

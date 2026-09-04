@@ -882,7 +882,7 @@ rollback_update_and_die() {
 }
 
 update_site() {
-    local ref sha new_release backup
+    local ref sha new_release backup grace_period="" grace_period_default
     require_installed
     prompt_default "Ветка, тег или коммит для развёртывания" "$SITE_REF" ref
     validate_ref "$ref" || die "Некорректная Git-ссылка."
@@ -902,6 +902,15 @@ update_site() {
     new_release="$PREPARED_SITE_RELEASE"
     validate_release_public_domain "$new_release" "$DOMAIN" || \
         die "Обычное обновление не активирует release с SEO-метаданными другого домена."
+    if grep -q '^SUBSCRIPTION_GRACE_PERIOD_DAYS=' "$new_release/.env.example"; then
+        grace_period_default="$(env_get SUBSCRIPTION_GRACE_PERIOD_DAYS 2>/dev/null || \
+            release_environment_value "$new_release" SUBSCRIPTION_GRACE_PERIOD_DAYS)"
+        validate_integer_range "$grace_period_default" 1 365 || \
+            die "Текущее или стандартное значение SUBSCRIPTION_GRACE_PERIOD_DAYS некорректно."
+        prompt_subscription_grace_period \
+            "Grace period истёкших подписок в днях" \
+            "$grace_period_default" grace_period
+    fi
     validate_remnawave_v3_access "$new_release" || \
         die "Обновите токен Remnawave через настройки окружения до остановки старой версии сайта."
     require_manager_owned_database
@@ -928,6 +937,9 @@ update_site() {
     UPDATE_BACKUP="$backup"
 
     migrate_environment_for_release "$new_release"
+    if [[ -n "$grace_period" ]]; then
+        env_set SUBSCRIPTION_GRACE_PERIOD_DAYS "$grace_period"
+    fi
     if ! validate_environment_schema_for_release "$new_release" || \
        ! validate_application_environment "$new_release"; then
         rollback_update_and_die "Новая версия отклонила конфигурацию окружения."
@@ -1226,29 +1238,32 @@ configure_limits() {
     require_installed
     printf 'Доступные для изменения лимиты:\n'
     printf '1. CLEANUP_INTERVAL_SECONDS (10..86400)\n'
-    printf '2. SUBSCRIPTION_NOTIFICATION_BATCH_SIZE (1..1000)\n'
-    printf '3. SUBSCRIPTION_NOTIFICATION_CONCURRENCY (1..20)\n'
-    printf '4. SUBSCRIPTION_NOTIFICATION_RETRY_MINUTES (1..1440)\n'
-    printf '5. MAX_REQUEST_BODY_BYTES (1024..10485760)\n'
-    printf '6. RATE_LIMIT_WINDOW_SECONDS (1..3600)\n'
-    printf '7. RATE_LIMIT_REQUESTS (10..10000)\n'
-    printf '8. AUTH_RATE_LIMIT_REQUESTS (2..1000)\n'
-    printf '9. WEBHOOK_RATE_LIMIT_REQUESTS (2..1000)\n'
+    printf '2. SUBSCRIPTION_GRACE_PERIOD_DAYS (1..365)\n'
+    printf '3. SUBSCRIPTION_NOTIFICATION_BATCH_SIZE (1..1000)\n'
+    printf '4. SUBSCRIPTION_NOTIFICATION_CONCURRENCY (1..20)\n'
+    printf '5. SUBSCRIPTION_NOTIFICATION_RETRY_MINUTES (1..1440)\n'
+    printf '6. MAX_REQUEST_BODY_BYTES (1024..10485760)\n'
+    printf '7. RATE_LIMIT_WINDOW_SECONDS (1..3600)\n'
+    printf '8. RATE_LIMIT_REQUESTS (10..10000)\n'
+    printf '9. AUTH_RATE_LIMIT_REQUESTS (2..1000)\n'
+    printf '10. WEBHOOK_RATE_LIMIT_REQUESTS (2..1000)\n'
     prompt "Номер" value
     case "$value" in
         1) key=CLEANUP_INTERVAL_SECONDS; minimum=10; maximum=86400 ;;
-        2) key=SUBSCRIPTION_NOTIFICATION_BATCH_SIZE; minimum=1; maximum=1000 ;;
-        3) key=SUBSCRIPTION_NOTIFICATION_CONCURRENCY; minimum=1; maximum=20 ;;
-        4) key=SUBSCRIPTION_NOTIFICATION_RETRY_MINUTES; minimum=1; maximum=1440 ;;
-        5) key=MAX_REQUEST_BODY_BYTES; minimum=1024; maximum=10485760 ;;
-        6) key=RATE_LIMIT_WINDOW_SECONDS; minimum=1; maximum=3600 ;;
-        7) key=RATE_LIMIT_REQUESTS; minimum=10; maximum=10000 ;;
-        8) key=AUTH_RATE_LIMIT_REQUESTS; minimum=2; maximum=1000 ;;
-        9) key=WEBHOOK_RATE_LIMIT_REQUESTS; minimum=2; maximum=1000 ;;
+        2) key=SUBSCRIPTION_GRACE_PERIOD_DAYS; minimum=1; maximum=365 ;;
+        3) key=SUBSCRIPTION_NOTIFICATION_BATCH_SIZE; minimum=1; maximum=1000 ;;
+        4) key=SUBSCRIPTION_NOTIFICATION_CONCURRENCY; minimum=1; maximum=20 ;;
+        5) key=SUBSCRIPTION_NOTIFICATION_RETRY_MINUTES; minimum=1; maximum=1440 ;;
+        6) key=MAX_REQUEST_BODY_BYTES; minimum=1024; maximum=10485760 ;;
+        7) key=RATE_LIMIT_WINDOW_SECONDS; minimum=1; maximum=3600 ;;
+        8) key=RATE_LIMIT_REQUESTS; minimum=10; maximum=10000 ;;
+        9) key=AUTH_RATE_LIMIT_REQUESTS; minimum=2; maximum=1000 ;;
+        10) key=WEBHOOK_RATE_LIMIT_REQUESTS; minimum=2; maximum=1000 ;;
         *) die "Некорректный выбор." ;;
     esac
     if ! current="$(env_get "$key" 2>/dev/null)"; then
         case "$key" in
+            SUBSCRIPTION_GRACE_PERIOD_DAYS) current=7 ;;
             SUBSCRIPTION_NOTIFICATION_BATCH_SIZE) current=100 ;;
             SUBSCRIPTION_NOTIFICATION_CONCURRENCY) current=5 ;;
             SUBSCRIPTION_NOTIFICATION_RETRY_MINUTES) current=5 ;;

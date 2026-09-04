@@ -100,6 +100,56 @@ class ManagerContractTests(unittest.TestCase):
         self.assertIn("expires_on IS NULL", operations)
         self.assertIn("free_key_copy_events", operations)
 
+    def test_subscription_grace_period_is_managed(self) -> None:
+        config = (ROOT / "lib" / "config.sh").read_text(encoding="utf-8")
+        operations = (ROOT / "lib" / "operations.sh").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn(
+            "env_set_default SUBSCRIPTION_GRACE_PERIOD_DAYS 7",
+            config,
+        )
+        self.assertIn(
+            "SUBSCRIPTION_GRACE_PERIOD_DAYS=$SUBSCRIPTION_GRACE_PERIOD_DAYS_INPUT",
+            config,
+        )
+        self.assertIn("prompt_subscription_grace_period", config)
+        self.assertIn(
+            "SUBSCRIPTION_GRACE_PERIOD_DAYS (1..365)",
+            operations,
+        )
+        self.assertIn(
+            'env_set SUBSCRIPTION_GRACE_PERIOD_DAYS "$grace_period"',
+            operations,
+        )
+        update_start = operations.index("update_site()")
+        update_prompt = operations.index(
+            "prompt_subscription_grace_period",
+            update_start,
+        )
+        update_stop = operations.index(
+            'systemctl stop "$SERVICE_NAME"',
+            update_start,
+        )
+        update_migrate = operations.index(
+            'migrate_environment_for_release "$new_release"',
+            update_start,
+        )
+        update_set = operations.index(
+            'env_set SUBSCRIPTION_GRACE_PERIOD_DAYS "$grace_period"',
+            update_start,
+        )
+        self.assertLess(update_prompt, update_stop)
+        self.assertLess(update_migrate, update_set)
+
+    def test_removed_remnawave_bulk_delete_scope_is_not_requested(self) -> None:
+        config = (ROOT / "lib" / "config.sh").read_text(encoding="utf-8")
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+
+        self.assertNotIn("users:bulk-delete-by-status", config)
+        self.assertNotIn("users:bulk-delete-by-status", readme)
+
     def test_remnawave_v3_probe_is_part_of_managed_workflows(self) -> None:
         config = (ROOT / "lib" / "config.sh").read_text(encoding="utf-8")
         deploy = (ROOT / "lib" / "deploy.sh").read_text(encoding="utf-8")
@@ -179,6 +229,7 @@ class CrossRepositoryContractTests(unittest.TestCase):
             "REMNAWAVE_TOKEN",
             "SECRET_KEY",
             "SITE_NAME",
+            "SUBSCRIPTION_GRACE_PERIOD_DAYS",
             "SMTP_HOST",
             "SMTP_HELO_NAME",
             "SMTP_PASSWORD",
