@@ -135,10 +135,6 @@ class ManagerContractTests(unittest.TestCase):
             operations,
         )
         update_start = operations.index("update_site()")
-        update_prompt = operations.index(
-            "prompt_subscription_grace_period",
-            update_start,
-        )
         update_stop = operations.index(
             'systemctl stop "$SERVICE_NAME"',
             update_start,
@@ -151,8 +147,16 @@ class ManagerContractTests(unittest.TestCase):
             'env_set SUBSCRIPTION_GRACE_PERIOD_DAYS "$grace_period"',
             update_start,
         )
-        self.assertLess(update_prompt, update_stop)
+        update_selection = operations.index(
+            'select_update_subscription_grace_period "$new_release" grace_period',
+            update_start,
+        )
+        self.assertLess(update_selection, update_stop)
         self.assertLess(update_migrate, update_set)
+        self.assertIn(
+            'if current_value="$(env_get SUBSCRIPTION_GRACE_PERIOD_DAYS 2>/dev/null)"',
+            config,
+        )
 
     def test_removed_remnawave_bulk_delete_scope_is_not_requested(self) -> None:
         config = (ROOT / "lib" / "config.sh").read_text(encoding="utf-8")

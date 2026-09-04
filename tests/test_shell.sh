@@ -74,6 +74,44 @@ validate_integer_range 14 1 3650
 )
 
 (
+    sandbox="$(mktemp -d)"
+    trap 'rm -rf -- "$sandbox"' EXIT
+    printf 'SUBSCRIPTION_GRACE_PERIOD_DAYS=7\n' >"$sandbox/.env.example"
+    env_get() { printf '%s\n' 30; }
+    prompt_subscription_grace_period() {
+        printf 'Existing grace period unexpectedly prompted.\n' >&2
+        return 1
+    }
+
+    select_update_subscription_grace_period "$sandbox" selected
+    [[ -z "$selected" ]]
+)
+
+(
+    sandbox="$(mktemp -d)"
+    trap 'rm -rf -- "$sandbox"' EXIT
+    printf 'SUBSCRIPTION_GRACE_PERIOD_DAYS=7\n' >"$sandbox/.env.example"
+    env_get() { return 1; }
+    prompt_subscription_grace_period() { printf -v "$3" '%s' 14; }
+
+    select_update_subscription_grace_period "$sandbox" selected
+    [[ "$selected" == 14 ]]
+)
+
+if (
+    sandbox="$(mktemp -d)"
+    trap 'rm -rf -- "$sandbox"' EXIT
+    printf 'SUBSCRIPTION_GRACE_PERIOD_DAYS=7\n' >"$sandbox/.env.example"
+    env_get() { printf '%s\n' 0; }
+    die() { exit 1; }
+
+    select_update_subscription_grace_period "$sandbox" selected
+); then
+    printf 'Invalid existing grace period was accepted.\n' >&2
+    exit 1
+fi
+
+(
     # shellcheck source=../lib/operations.sh
     source "$ROOT/lib/operations.sh"
     require_installed() { :; }

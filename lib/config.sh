@@ -135,6 +135,27 @@ prompt_subscription_grace_period() {
     done
 }
 
+select_update_subscription_grace_period() {
+    local release="$1" variable_name="$2" current_value default_value
+    printf -v "$variable_name" '%s' ""
+    grep -q '^SUBSCRIPTION_GRACE_PERIOD_DAYS=' "$release/.env.example" || \
+        return 0
+
+    if current_value="$(env_get SUBSCRIPTION_GRACE_PERIOD_DAYS 2>/dev/null)"; then
+        validate_integer_range "$current_value" 1 365 || \
+            die "Текущее значение SUBSCRIPTION_GRACE_PERIOD_DAYS некорректно."
+        return 0
+    fi
+
+    default_value="$(release_environment_value \
+        "$release" SUBSCRIPTION_GRACE_PERIOD_DAYS)"
+    validate_integer_range "$default_value" 1 365 || \
+        die "Стандартное значение SUBSCRIPTION_GRACE_PERIOD_DAYS некорректно."
+    prompt_subscription_grace_period \
+        "Grace period истёкших подписок в днях" \
+        "$default_value" "$variable_name"
+}
+
 migrate_environment_for_release() {
     local release="$1" key public_site_url return_url site_name current_site_name
     local mail_from_name current_mail_from_name smtp_helo_name

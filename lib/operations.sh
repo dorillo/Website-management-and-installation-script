@@ -936,7 +936,7 @@ rollback_update_and_die() {
 }
 
 update_site() {
-    local ref sha new_release backup grace_period="" grace_period_default
+    local ref sha new_release backup grace_period=""
     require_installed
     prompt_default "Ветка, тег или коммит для развёртывания" "$SITE_REF" ref
     validate_ref "$ref" || die "Некорректная Git-ссылка."
@@ -956,15 +956,7 @@ update_site() {
     new_release="$PREPARED_SITE_RELEASE"
     validate_release_public_domain "$new_release" "$DOMAIN" || \
         die "Обычное обновление не активирует release с SEO-метаданными другого домена."
-    if grep -q '^SUBSCRIPTION_GRACE_PERIOD_DAYS=' "$new_release/.env.example"; then
-        grace_period_default="$(env_get SUBSCRIPTION_GRACE_PERIOD_DAYS 2>/dev/null || \
-            release_environment_value "$new_release" SUBSCRIPTION_GRACE_PERIOD_DAYS)"
-        validate_integer_range "$grace_period_default" 1 365 || \
-            die "Текущее или стандартное значение SUBSCRIPTION_GRACE_PERIOD_DAYS некорректно."
-        prompt_subscription_grace_period \
-            "Grace period истёкших подписок в днях" \
-            "$grace_period_default" grace_period
-    fi
+    select_update_subscription_grace_period "$new_release" grace_period
     validate_remnawave_v3_access "$new_release" || \
         die "Обновите токен Remnawave через настройки окружения до остановки старой версии сайта."
     require_manager_owned_database
