@@ -161,13 +161,16 @@ curl() {
 migrate_environment_for_release "$CURRENT_LINK"
 missing_route=unused
 verify_local_https_routes
-for route in '/payment-return?payment_id=manager-probe&payment_origin=telegram' \
+for route in '/profile' '/profile/subscription' '/profile/settings/payments' \
+    '/payment-return' '/payment-return?payment_id=manager-probe&payment_origin=telegram' \
     '/payments/telegram-return-config' '/js/vendor/telegram-web-app.js' \
     '/js/core/telegram.js' '/js/core/miniAppPayment.js' \
+    '/js/core/paymentReturn.js' '/js/core/toast.js' \
     '/js/pages/account/paymentReturn/miniAppPaymentPage.js' \
     '/js/pages/account/paymentReturn/telegramPaymentHandoff.js' \
+    '/js/templates/account/paymentReturnTemplates.js' \
     '/css/telegram.css' '/css/payment-return.css'; do
-    grep -Fq "$route" "$sandbox/routes"
+    grep -Fxq "https://$DOMAIN$route" "$sandbox/routes"
     missing_route="$route"
     ! verify_local_https_routes
 done

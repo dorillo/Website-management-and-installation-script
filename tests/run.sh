@@ -4,7 +4,9 @@ set -Eeuo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 cd "$ROOT"
 
-bash -n install.sh lib/*.sh tests/*.sh
+for script in install.sh lib/*.sh tests/*.sh; do
+    bash -n "$script"
+done
 bash tests/test_shell.sh
 bash tests/test_telegram.sh
 

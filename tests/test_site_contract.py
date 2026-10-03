@@ -259,6 +259,30 @@ class ManagerContractTests(unittest.TestCase):
 
 @unittest.skipUnless(SITE_ROOT.is_dir(), "adjacent vpn-site checkout is absent")
 class CrossRepositoryContractTests(unittest.TestCase):
+    def test_mini_app_https_probes_match_current_site(self) -> None:
+        operations = (ROOT / "lib" / "operations.sh").read_text(encoding="utf-8")
+        mini_app_checks = operations.split("checks+=(", 1)[1].split(
+            "\n        )", 1
+        )[0]
+        paths = re.findall(r'"(/[^" ]+) 200"', mini_app_checks)
+        self.assertTrue(paths)
+        routes = (SITE_ROOT / "frontend" / "js" / "app" / "routePaths.js").read_text(
+            encoding="utf-8"
+        )
+        payments_api = (SITE_ROOT / "backend" / "routers" / "payments.py").read_text(
+            encoding="utf-8"
+        )
+        for path in paths:
+            with self.subTest(path=path):
+                if path.startswith(("/js/", "/css/")):
+                    asset = SITE_ROOT / "frontend" / path.lstrip("/")
+                    self.assertTrue(asset.is_file(), f"Probe asset is missing: {path}")
+                    self.assertGreater(asset.stat().st_size, 0)
+                elif path.startswith("/payments/"):
+                    self.assertIn(f'@router.get("{path}")', payments_api)
+                else:
+                    self.assertIn(f'staticRoute("{path.split("?", 1)[0]}"', routes)
+
     def test_generated_environment_matches_site_production_example(self) -> None:
         site_environment = (SITE_ROOT / ".env.example").read_text(
             encoding="utf-8"

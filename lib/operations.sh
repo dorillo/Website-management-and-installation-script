@@ -56,13 +56,20 @@ verify_local_https_routes() {
     if [[ -f "$CURRENT_LINK/frontend/index.html" ]] && \
        grep -Fq '/js/vendor/telegram-web-app.js' "$CURRENT_LINK/frontend/index.html"; then
         checks+=(
+            "/profile 200"
+            "/profile/subscription 200"
+            "/profile/settings/payments 200"
+            "/payment-return 200"
             "/payment-return?payment_id=manager-probe&payment_origin=telegram 200"
             "/payments/telegram-return-config 200"
             "/js/vendor/telegram-web-app.js 200"
             "/js/core/telegram.js 200"
             "/js/core/miniAppPayment.js 200"
+            "/js/core/paymentReturn.js 200"
+            "/js/core/toast.js 200"
             "/js/pages/account/paymentReturn/miniAppPaymentPage.js 200"
             "/js/pages/account/paymentReturn/telegramPaymentHandoff.js 200"
+            "/js/templates/account/paymentReturnTemplates.js 200"
             "/css/telegram.css 200"
             "/css/payment-return.css 200"
         )
