@@ -165,29 +165,41 @@ class ManagerContractTests(unittest.TestCase):
         self.assertNotIn("users:bulk-delete-by-status", config)
         self.assertNotIn("users:bulk-delete-by-status", readme)
 
-    def test_telegram_choice_is_collected_before_downtime_and_saved_after_backup(self) -> None:
+    def test_obsolete_telegram_setting_is_removed_inside_env_transactions(self) -> None:
         config = (ROOT / "lib" / "config.sh").read_text(encoding="utf-8")
         operations = (ROOT / "lib" / "operations.sh").read_text(encoding="utf-8")
         update = operations.split("update_site()", 1)[1].split(
             "repair_runtime_configuration()", 1
         )[0]
-        selection = update.index('select_update_telegram_mini_app_url "$new_release"')
         backup = update.index('UPDATE_ENV_BACKUP="$(backup_environment)"')
         stop = update.index('systemctl stop "$SERVICE_NAME"')
-        write = update.index('env_set TELEGRAM_MINI_APP_URL "$telegram_mini_app_url"')
+        migration = update.index('migrate_environment_for_release "$new_release"')
         validation = update.index('validate_application_environment "$new_release"')
-        self.assertLess(selection, backup)
         self.assertLess(backup, stop)
-        self.assertLess(stop, write)
-        self.assertLess(write, validation)
-        self.assertIn("if (( telegram_mini_app_selected == 1 )); then", update)
-        self.assertIn("prompt_telegram_mini_app_url TELEGRAM_MINI_APP_URL_INPUT", config)
-        self.assertIn("11) configure_telegram_mini_app; pause ;;", operations)
-        # Repair must not turn an unanswered optional setting into an opt-out.
-        migration = config.split("migrate_environment_for_release()", 1)[1].split(
-            "validate_environment_schema_for_release()", 1
+        self.assertLess(stop, migration)
+        self.assertLess(migration, validation)
+        self.assertIn("env_unset TELEGRAM_MINI_APP_URL", config)
+        self.assertNotIn("TELEGRAM_MINI_APP_URL", generated_environment_block())
+        for removed in (
+            "prompt_telegram_mini_app_url",
+            "select_update_telegram_mini_app_url",
+            "validate_telegram_mini_app_url",
+            "configure_telegram_mini_app",
+            "TELEGRAM_MINI_APP_URL_INPUT",
+        ):
+            self.assertNotIn(removed, config + operations)
+
+        repair = operations.split("repair_runtime_configuration()", 1)[1].split(
+            "update_manager()", 1
         )[0]
-        self.assertNotIn("env_set_default TELEGRAM_MINI_APP_URL", migration)
+        self.assertLess(
+            repair.index('ACTIVE_ENV_BACKUP="$env_backup"'),
+            repair.index('migrate_environment_for_release "$CURRENT_LINK"'),
+        )
+        self.assertLess(
+            repair.index("validate_application_environment"),
+            repair.index('ACTIVE_ENV_BACKUP=""'),
+        )
 
     def test_remnawave_v3_probe_is_part_of_managed_workflows(self) -> None:
         config = (ROOT / "lib" / "config.sh").read_text(encoding="utf-8")
@@ -263,7 +275,6 @@ class CrossRepositoryContractTests(unittest.TestCase):
             "FROM_EMAIL",
             "MAIL_FROM_NAME",
             "PUBLIC_SITE_URL",
-            "TELEGRAM_MINI_APP_URL",
             "REMNAWAVE_API_URL",
             "REMNAWAVE_COOKIES_JSON",
             "REMNAWAVE_TOKEN",
