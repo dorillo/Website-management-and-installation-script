@@ -6,6 +6,7 @@ cd "$ROOT"
 
 bash -n install.sh lib/*.sh tests/*.sh
 bash tests/test_shell.sh
+bash tests/test_telegram.sh
 
 if command -v python3.14 >/dev/null 2>&1; then
     PYTHON=python3.14

@@ -135,6 +135,53 @@ prompt_subscription_grace_period() {
     done
 }
 
+validate_telegram_mini_app_url() {
+    local value="$1" prefix
+    local LC_ALL=C
+    local pattern='^https://t\.me/[A-Za-z][A-Za-z0-9_]{4,31}(/[A-Za-z0-9_]{1,64})?(\?(startapp=?)?)?#?$'
+    [[ -z "$value" ]] && return 0
+    # Match backend.config normalization, including existing manually entered
+    # URLs with a trailing slash or uppercase scheme/host. Preserve the value.
+    while [[ "$value" == */ ]]; do value="${value%/}"; done
+    prefix="${value:0:12}"
+    value="${prefix,,}${value:12}"
+    [[ "$value" =~ $pattern ]]
+}
+
+prompt_telegram_mini_app_url() {
+    local variable_name="$1" input_value
+    info "Ссылка для возврата после оплаты: https://t.me/BOT_NAME?startapp или https://t.me/BOT_NAME/APP_NAME."
+    while true; do
+        prompt_default "TELEGRAM_MINI_APP_URL (необязательно, Enter — оставить пустым)" "" input_value
+        if validate_telegram_mini_app_url "$input_value"; then
+            printf -v "$variable_name" '%s' "$input_value"
+            return 0
+        fi
+        warn "Введите HTTPS-ссылку на Mini App в t.me без значения startapp, других параметров или фрагмента либо оставьте поле пустым."
+    done
+}
+
+select_update_telegram_mini_app_url() {
+    local release="$1" variable_name="$2" selected_name="$3" current_value status
+    printf -v "$variable_name" '%s' ""
+    printf -v "$selected_name" '%s' 0
+    grep -q '^TELEGRAM_MINI_APP_URL=' "$release/.env.example" || return 0
+
+    if current_value="$(env_get TELEGRAM_MINI_APP_URL 2>/dev/null)"; then
+        validate_telegram_mini_app_url "$current_value" || \
+            die "Текущее значение TELEGRAM_MINI_APP_URL некорректно. Исправьте его в настройках окружения."
+        return 0
+    else
+        status=$?
+        (( status == 1 )) || die "Не удалось прочитать TELEGRAM_MINI_APP_URL из env-файла."
+    fi
+
+    prompt_telegram_mini_app_url "$variable_name"
+    # An explicit empty answer is also a setting and must be saved, so that
+    # subsequent updates do not ask the operator again.
+    printf -v "$selected_name" '%s' 1
+}
+
 select_update_subscription_grace_period() {
     local release="$1" variable_name="$2" current_value default_value
     printf -v "$variable_name" '%s' ""
@@ -234,7 +281,7 @@ migrate_environment_for_release() {
 
 validate_environment_schema_for_release() {
     local release="$1" key failed=0 public_site_url return_url site_name
-    local mail_from_name smtp_helo_name
+    local mail_from_name smtp_helo_name telegram_mini_app_url
     grep -q '^PUBLIC_COPY_MODE=' "$release/.env.example" && return 0
     for key in "${LEGACY_APPEARANCE_ENV_KEYS[@]}"; do
         if env_get "$key" >/dev/null 2>&1; then
@@ -281,6 +328,15 @@ validate_environment_schema_for_release() {
             failed=1
         fi
     fi
+    if grep -q '^TELEGRAM_MINI_APP_URL=' "$release/.env.example"; then
+        # Absence is allowed during noninteractive repair of a manual upgrade.
+        # Only the update wizard records an explicit choice for this key.
+        telegram_mini_app_url="$(env_get TELEGRAM_MINI_APP_URL 2>/dev/null || true)"
+        if ! validate_telegram_mini_app_url "$telegram_mini_app_url"; then
+            error "TELEGRAM_MINI_APP_URL должен быть ссылкой на Mini App в t.me либо пустым."
+            failed=1
+        fi
+    fi
     return_url="$(env_get YOOKASSA_RETURN_URL 2>/dev/null || true)"
     if [[ "$return_url" != "https://$DOMAIN/payment-return" ]]; then
         error "YOOKASSA_RETURN_URL должен указывать на https://$DOMAIN/payment-return"
@@ -305,6 +361,7 @@ DATABASE_URL=postgresql+asyncpg://vpn_site:${database_password}@127.0.0.1:5432/v
 ADMIN_BOOTSTRAP_EMAILS=$ADMIN_EMAIL_INPUT
 CORS_ALLOWED_ORIGINS=https://$DOMAIN
 PUBLIC_SITE_URL=$PUBLIC_SITE_URL_INPUT
+TELEGRAM_MINI_APP_URL=$TELEGRAM_MINI_APP_URL_INPUT
 TRUSTED_HOSTS=$DOMAIN
 CLEANUP_INTERVAL_SECONDS=60
 SUBSCRIPTION_GRACE_PERIOD_DAYS=$SUBSCRIPTION_GRACE_PERIOD_DAYS_INPUT
@@ -532,6 +589,9 @@ collect_installation_settings() {
         collect_yookassa_settings
     fi
 
+    printf '\nНастройка Telegram Mini App\n'
+    prompt_telegram_mini_app_url TELEGRAM_MINI_APP_URL_INPUT
+
     printf '\nНастройка межсетевого экрана\n'
     collect_firewall_settings
 
@@ -601,7 +661,7 @@ backup_environment() {
 }
 
 show_environment_summary() {
-    local mail_from_name smtp_helo_name
+    local mail_from_name smtp_helo_name telegram_mini_app_url
     require_installed
     mail_from_name="$(env_get MAIL_FROM_NAME 2>/dev/null || true)"
     [[ -n "$mail_from_name" ]] || mail_from_name="$DEFAULT_MAIL_FROM_NAME"
@@ -610,6 +670,11 @@ show_environment_summary() {
     printf 'Название backend: %s\n' "$(env_get SITE_NAME)"
     printf 'Публичный URL сайта: %s\n' \
         "$(env_get PUBLIC_SITE_URL 2>/dev/null || printf 'не задан')"
+    if telegram_mini_app_url="$(env_get TELEGRAM_MINI_APP_URL 2>/dev/null)"; then
+        printf 'Возврат в Telegram Mini App: %s\n' "${telegram_mini_app_url:-не настроен (пустое значение)}"
+    else
+        printf 'Возврат в Telegram Mini App: переменная отсутствует\n'
+    fi
     printf 'Хост SMTP: %s:%s\n' "$(env_get SMTP_HOST)" "$(env_get SMTP_PORT)"
     printf 'Имя SMTP HELO/EHLO: %s\n' "$smtp_helo_name"
     printf 'Имя отправителя писем: %s\n' "$mail_from_name"

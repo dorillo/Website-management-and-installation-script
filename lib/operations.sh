@@ -51,6 +51,16 @@ verify_local_https_routes() {
             "/admin/routing-probe-not-found 404"
         )
     fi
+    if grep -q '^TELEGRAM_MINI_APP_URL=' "$CURRENT_LINK/.env.example"; then
+        checks+=(
+            "/payment-return?payment_id=manager-probe&payment_origin=telegram 200"
+            "/payments/telegram-return-config 200"
+            "/js/vendor/telegram-web-app.js 200"
+            "/js/core/telegram.js 200"
+            "/css/telegram.css 200"
+            "/css/payment-return.css 200"
+        )
+    fi
     for check in "${checks[@]}"; do
         read -r path expected <<<"$check"
         status="$(curl --silent --show-error --max-time 7 --output /dev/null \
@@ -937,6 +947,7 @@ rollback_update_and_die() {
 
 update_site() {
     local ref sha new_release backup grace_period=""
+    local telegram_mini_app_url="" telegram_mini_app_selected=0
     require_installed
     prompt_default "Ветка, тег или коммит для развёртывания" "$SITE_REF" ref
     validate_ref "$ref" || die "Некорректная Git-ссылка."
@@ -957,6 +968,8 @@ update_site() {
     validate_release_public_domain "$new_release" "$DOMAIN" || \
         die "Обычное обновление не активирует release с SEO-метаданными другого домена."
     select_update_subscription_grace_period "$new_release" grace_period
+    select_update_telegram_mini_app_url "$new_release" \
+        telegram_mini_app_url telegram_mini_app_selected
     validate_remnawave_v3_access "$new_release" || \
         die "Обновите токен Remnawave через настройки окружения до остановки старой версии сайта."
     require_manager_owned_database
@@ -986,6 +999,9 @@ update_site() {
     migrate_environment_for_release "$new_release"
     if [[ -n "$grace_period" ]]; then
         env_set SUBSCRIPTION_GRACE_PERIOD_DAYS "$grace_period"
+    fi
+    if (( telegram_mini_app_selected == 1 )); then
+        env_set TELEGRAM_MINI_APP_URL "$telegram_mini_app_url"
     fi
     if ! validate_environment_schema_for_release "$new_release" || \
        ! validate_application_environment "$new_release"; then
@@ -1212,6 +1228,23 @@ configure_smtp_helo_name() {
     apply_environment_change "$backup"
 }
 
+configure_telegram_mini_app() {
+    local backup current value
+    require_installed
+    if ! grep -q '^TELEGRAM_MINI_APP_URL=' "$CURRENT_LINK/.env.example"; then
+        warn "Установленная версия сайта не поддерживает Telegram Mini App. Сначала обновите сайт."
+        return 0
+    fi
+    current="$(env_get TELEGRAM_MINI_APP_URL 2>/dev/null || true)"
+    printf 'Текущая ссылка Mini App: %s\n' "${current:-не задана}"
+    info "Введите новую ссылку. Пустой ввод отключит ссылку возврата в Mini App."
+    prompt_telegram_mini_app_url value
+    backup="$(backup_environment)"
+    ACTIVE_ENV_BACKUP="$backup"
+    env_set TELEGRAM_MINI_APP_URL "$value"
+    apply_environment_change "$backup"
+}
+
 configure_remnawave() {
     local backup url token cookies
     require_installed
@@ -1387,6 +1420,7 @@ environment_menu() {
         printf '8. Завершить выдачу прав первого администратора\n'
         printf '9. Безопасная сводка конфигурации\n'
         printf '10. Редактировать полный env-файл\n'
+        printf '11. Telegram Mini App — ссылка возврата после оплаты\n'
         printf '0. Назад\n\n'
         printf 'Выберите пункт: ' >/dev/tty
         IFS= read -r choice </dev/tty
@@ -1401,6 +1435,7 @@ environment_menu() {
             8) finish_admin_bootstrap; pause ;;
             9) show_environment_summary; pause ;;
             10) edit_environment_file; pause ;;
+            11) configure_telegram_mini_app; pause ;;
             0) return 0 ;;
             *) warn "Неизвестный пункт меню."; pause ;;
         esac
